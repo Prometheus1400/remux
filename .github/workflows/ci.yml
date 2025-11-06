@@ -1,24 +1,16 @@
-name: Merge Gates
+name: CI
 
 on:
   pull_request:
     branches: [main]
+    types:
+      - opened
+      - reopened
+      - synchronize
 
 jobs:
-  pr-title-check:
-    name: "PR Title Checker"
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - uses: thehanimo/pr-title-checker@v1.4.3
-        with:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          configuration_path: .github/pr-title-checker-config.json
-
   build-and-test:
-    name: Build & Test
+    name: Build and Test
     runs-on: ubuntu-latest
 
     steps:
