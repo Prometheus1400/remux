@@ -1,22 +1,19 @@
-name: "PR Title Lint"
-
+name: "PR Title Checker"
 on:
-  pull_request:
-    types: [opened, edited, reopened, synchronize]
+  pull_request_target:
+    types:
+      - opened
+      - edited
+      - synchronize
+      - labeled
+      - unlabeled
 
 jobs:
-  conventional-commits:
+  check:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Lint PR title
-        uses: amitsingh-007/validate-pr-title@v1.5
+      - uses: thehanimo/pr-title-checker@v1.4.3
         with:
-          pattern: '^(feat|fix|chore|docs|refactor|test|perf)(\(.+\))?: .+'
-          flags: 'i'
-          error-message: |
-            PR title does not follow Conventional Commits.
-            Must start with one of:
-            feat:, fix:, chore:, docs:, refactor:, test:, perf:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          pass_on_octokit_error: false
+          configuration_path: .github/pr-title-checker-config.json #(optional. defaults to .github/pr-title-checker-config.json)
