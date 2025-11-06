@@ -21,7 +21,7 @@ jobs:
       - uses: thehanimo/pr-title-checker@v1.4.3
         with:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          configuration_path: .github/pr-title-check-config.json
+          configuration_path: .github/pr-title-checker-config.json
 
   build-and-test:
     name: Build & Test
