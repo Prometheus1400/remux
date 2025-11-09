@@ -8,6 +8,6 @@ resolver = "3"
 edition = "2024"
 
 [workspace.dependencies]
-tokio = { version = "1.41", features = ["full"]}
+tokio = { version = "1.48", features = ["full"]}
 serde = {version = "1.0", features = ["derive"]}
-itertools = {version = "0.14.0"}
+itertools = {version = "0.14"}
