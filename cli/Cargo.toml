@@ -1,0 +1,11 @@
+[package]
+name = "remux-cli"
+version = "0.1.0"
+edition.workspace = true
+authors = ["Kaleb Dickerson", "Ryan Weisman"]
+
+[dependencies]
+remux-core = { path = "../core" }
+tokio.workspace = true
+serde.workspace = true
+itertools.workspace = true
