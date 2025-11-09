@@ -1,7 +1,13 @@
-[package]
-name = "remux"
-version = "0.1.0"
-edition = "2024"
-authors = ["Kaleb Dickerson", "Ryan Weisman"]
+[workspace]
+members = [
+"daemon", "cli", "core"
+]
+resolver = "3"
 
-[dependencies]
+[workspace.package]
+edition = "2024"
+
+[workspace.dependencies]
+tokio = { version = "1.41", features = ["full"]}
+serde = {version = "1.0", features = ["derive"]}
+itertools = {version = "0.14.0"}

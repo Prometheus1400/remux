@@ -1,0 +1,12 @@
+[package]
+name = "remux-daemon"
+version = "0.1.0"
+edition.workspace = true
+authors = ["Kaleb Dickerson", "Ryan Weisman"]
+
+
+[dependencies]
+tokio.workspace = true
+serde.workspace = true
+itertools.workspace = true
+remux-core = { path = "../core" }
