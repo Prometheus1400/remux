@@ -6,12 +6,12 @@ use std::net::SocketAddr;
 use crate::error::RemuxDaemonError;
 use remux_core::constants;
 use remux_core::daemon_utils;
-use tokio::net::TcpListener;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpListener;
 use tokio::net::TcpStream;
 
 pub struct RemuxDaemon {
-    port: u16, // port the daemon is listening on for IPC
+    port: u16,          // port the daemon is listening on for IPC
     _daemon_file: File, // daemon must hold the exclusive file lock while it is alive and running
 }
 
@@ -44,6 +44,6 @@ impl RemuxDaemon {
 async fn handle_communication(mut stream: TcpStream) {
     let mut buf = [0u8; 1024];
     loop {
-        let n = stream.read(&mut buf).await;        
+        let n = stream.read(&mut buf).await;
     }
 }
