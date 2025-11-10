@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
+    io::{AsyncRead, AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
 };
 
@@ -26,15 +26,19 @@ pub async fn write_message<T: Serialize>(
     Ok(())
 }
 
-pub async fn read_message<T: DeserializeOwned>(stream: &mut TcpStream) -> Result<T, RemuxLibError> {
+pub async fn read_message<R, T>(reader: &mut R) -> Result<T, RemuxLibError>
+where
+    R: AsyncRead + Unpin,
+    T: DeserializeOwned,
+{
     let mut num_bytes = [0u8; 4];
-    stream.read_exact(&mut num_bytes).await?;
+    reader.read_exact(&mut num_bytes).await?;
     let num_bytes = u32::from_be_bytes(num_bytes);
 
     let mut message_bytes = vec![0u8; num_bytes as usize];
-    stream.read_exact(&mut message_bytes).await?;
+    reader.read_exact(&mut message_bytes).await?;
 
-    let message: T = serde_json::from_str(&String::from_utf8(message_bytes).unwrap()).unwrap();
+    let message: T = serde_json::from_slice(&message_bytes)?;
     Ok(message)
 }
 
