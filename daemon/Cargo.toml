@@ -9,4 +9,5 @@ authors = ["Kaleb Dickerson", "Ryan Weisman"]
 tokio.workspace = true
 serde.workspace = true
 itertools.workspace = true
+thiserror.workspace = true
 remux-core = { path = "../core" }
