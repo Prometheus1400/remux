@@ -6,7 +6,7 @@ use std::net::SocketAddr;
 use crate::error::RemuxDaemonError;
 use remux_core::constants;
 use remux_core::daemon_utils;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncReadExt;
 use tokio::net::TcpListener;
 use tokio::net::TcpStream;
 
@@ -44,6 +44,6 @@ impl RemuxDaemon {
 async fn handle_communication(mut stream: TcpStream) {
     let mut buf = [0u8; 1024];
     loop {
-        let n = stream.read(&mut buf).await;
+        let _n = stream.read(&mut buf).await;
     }
 }

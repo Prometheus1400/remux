@@ -1,5 +1,3 @@
-use std::io::Read;
-
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -23,8 +21,8 @@ pub async fn write_message<T: Serialize>(
     let bytes = serde_json::to_vec(&message).unwrap();
     let num_bytes = bytes.len() as u32;
 
-    stream.write(&num_bytes.to_be_bytes()).await?;
-    stream.write(&bytes).await?;
+    let _written = stream.write(&num_bytes.to_be_bytes()).await?;
+    let _written = stream.write(&bytes).await?;
     Ok(())
 }
 
