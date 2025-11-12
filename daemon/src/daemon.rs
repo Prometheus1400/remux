@@ -148,9 +148,9 @@ async fn run_pty(mut stream: TcpStream) -> Result<(), RemuxDaemonError> {
                                 break;
                             }
                         },
-                        Some(mut data) = recv_for_tcp.recv() => {
+                        Some(data) = recv_for_tcp.recv() => {
                             info!("writing to tcp: {}", String::from_utf8(data.clone()).unwrap());
-                            stream.write_all(&mut data).await.unwrap();
+                            stream.write_all(&data).await.unwrap();
                         }
                     }
                 }
@@ -170,7 +170,7 @@ async fn run_pty(mut stream: TcpStream) -> Result<(), RemuxDaemonError> {
         Child => {
             // exec bash
             let cmd = CString::new("/bin/bash").unwrap();
-            execvp(&cmd, &[cmd.clone()]).unwrap();
+            execvp(&cmd, std::slice::from_ref(&cmd)).unwrap();
             unreachable!();
         }
     }
