@@ -1,5 +1,4 @@
 use thiserror::Error;
-use tokio::task::JoinError;
 
 #[derive(Error, Debug)]
 pub enum RemuxDaemonError {
@@ -28,5 +27,5 @@ pub enum RemuxDaemonError {
     SlaveError(#[from] pty::fork::SlaveError),
 
     #[error("Join Error: {0}")]
-    JoinError(#[from] JoinError),
+    JoinError(#[from] tokio::task::JoinError),
 }
