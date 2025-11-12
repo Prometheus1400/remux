@@ -9,3 +9,5 @@ remux-core = { path = "../core" }
 tokio.workspace = true
 serde.workspace = true
 itertools.workspace = true
+crossterm = "0.29.0"
+thiserror.workspace = true

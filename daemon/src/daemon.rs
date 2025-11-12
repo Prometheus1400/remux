@@ -1,26 +1,35 @@
-use nix::pty;
-use nix::unistd;
-use std::fs::File;
-use std::net::IpAddr;
-use std::net::Ipv6Addr;
-use std::net::SocketAddr;
-use std::os::unix::process::CommandExt;
-use std::process::Command;
-use std::sync::Arc;
-use tokio::io::AsyncReadExt;
-use tokio::io::AsyncWriteExt;
-use tokio::io::unix::AsyncFd;
-use tokio::sync::Mutex;
-use tokio::task::JoinHandle;
+use nix::{
+    libc::{F_GETFL, F_SETFL, O_NONBLOCK, fcntl},
+    pty,
+    unistd::{self, execvp},
+};
+use pty::{
+    ForkptyResult::{Child, Parent},
+    forkpty,
+};
+use std::os::fd::FromRawFd;
+use std::{
+    ffi::CString,
+    fs::File,
+    net::{IpAddr, Ipv6Addr, SocketAddr},
+    os::fd::{self, AsFd, AsRawFd},
+    time::Duration,
+};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt, unix::AsyncFd},
+    sync::mpsc,
+    time::sleep,
+};
+use tracing::{error, info, instrument, warn};
 
-use crate::error::RemuxDaemonError;
-use remux_core::constants;
-use remux_core::daemon_utils;
-use remux_core::messages;
-use remux_core::messages::RemuxDaemonRequest;
-use tokio::net::TcpListener;
-use tokio::net::TcpStream;
+use crate::error::RemuxDaemonError::{self, GenericMasterError};
+use remux_core::{
+    constants, daemon_utils,
+    messages::{self, RemuxDaemonRequest},
+};
+use tokio::net::{TcpListener, TcpStream};
 
+#[derive(Debug)]
 pub struct RemuxDaemon {
     port: u16,          // port the daemon is listening on for IPC
     _daemon_file: File, // daemon must hold the exclusive file lock while it is alive and running
@@ -36,13 +45,16 @@ impl RemuxDaemon {
         })
     }
 
+    #[instrument(skip(self))]
     pub async fn listen(&self) -> Result<(), RemuxDaemonError> {
         let listener = TcpListener::bind(self.get_sock_addr()).await?;
         loop {
             let (stream, addr) = listener.accept().await?;
-            println!("accepting connection from: {}", addr);
+            info!("accepting connection from: {}", addr);
             tokio::spawn(async move {
-                handle_communication(stream).await;
+                if let Err(e) = handle_communication(stream).await {
+                    error!("{e}");
+                }
             });
         }
     }
@@ -52,39 +64,43 @@ impl RemuxDaemon {
     }
 }
 
-async fn handle_communication(mut stream: TcpStream) {
+#[instrument]
+async fn handle_communication(mut stream: TcpStream) -> Result<(), RemuxDaemonError> {
     loop {
         let message: RemuxDaemonRequest = messages::read_message(&mut stream).await.unwrap();
         match message {
             RemuxDaemonRequest::Connect => {
-                run_pty(stream).await;
-                break;
+                run_pty(stream).await?;
+                return Ok(());
             }
             RemuxDaemonRequest::Disconnect => todo!(),
         }
     }
 }
 
+#[instrument]
 async fn run_pty(mut stream: TcpStream) -> Result<(), RemuxDaemonError> {
-    use pty::{
-        ForkptyResult,
-        ForkptyResult::{Child, Parent},
-        forkpty,
-    };
-    use tokio::sync::mpsc;
-
-    let fork_result: ForkptyResult;
-    unsafe {
-        fork_result = forkpty(None, None)?;
-    }
+    // setsid()?;
+    let fork_result = unsafe { forkpty(None, None)? };
     match fork_result {
         // one tokio task that just wraps the master FD
         // one task that just wraps the stream
         //
         // they can communicate via channels !!
         Parent { child, master } => {
-            let (send_to_pty, mut recv_for_pty) = mpsc::channel::<Vec<u8>>(64);
-            let (send_to_tcp, mut recv_for_tcp) = mpsc::channel::<Vec<u8>>(64);
+            info!("parent PID: {}", master.as_fd().as_raw_fd());
+            info!("child PID: {}", child.as_raw());
+            let (send_to_pty, mut recv_for_pty) = mpsc::unbounded_channel::<Vec<u8>>();
+            let (send_to_tcp, mut recv_for_tcp) = mpsc::unbounded_channel::<Vec<u8>>();
+
+            let fd = master.as_raw_fd();
+            unsafe {
+                // Get current flags
+                let flags = fcntl(fd, F_GETFL);
+                // Set non-blocking flag
+                let new_flags = flags | O_NONBLOCK;
+                fcntl(fd, F_SETFL, new_flags);
+            }
             let async_fd = AsyncFd::new(master)?;
 
             let pty_fd_task = tokio::spawn(async move {
@@ -93,33 +109,34 @@ async fn run_pty(mut stream: TcpStream) -> Result<(), RemuxDaemonError> {
                         // read from PTY
                         Ok(mut guard) = async_fd.readable() => {
                             let mut buf = [0u8; 1024];
-                            let data = guard.try_io(|fd| {
-                                match unistd::read(fd.get_ref(), &mut buf) {
-                                    Ok(n) => Ok(buf[..n].to_vec()),
-                                    Err(nix::errno::Errno::EAGAIN) => Ok(Vec::new()), // no data yet
-                                    Err(e) => Err(e.into()),
-                                }
-                            }).expect("expected data to be read from master fd");
-                            match data {
-                                Ok(buf) if !buf.is_empty() => {
-                                    send_to_tcp.send(buf).await.unwrap();
-                                }
-                                _ => {}
-                            };
+                            match guard.try_io(|fd| unistd::read(fd.get_ref(), &mut buf).map_err(|e| e.into())) {
+                                Ok(Ok(n)) if n > 0 => {
+                                    send_to_tcp.send(buf[..n].to_vec()).map_err(|_e| GenericMasterError("couldn't send to tcp".into()))?;
+                                },
+                                Ok(Ok(_)) => {
+                                    break;
+                                },
+                                Ok(Err(e)) => {
+                                    error!("Error reading: {e}");
+                                },
+                                Err(_would_block) => {continue;},
+                            }
                         },
                         // write to PTY
                         Some(data) = recv_for_pty.recv() => {
-                            let mut guard = async_fd.writable().await.unwrap();
-                            guard.try_io(|fd| {
+                            let mut guard = async_fd.writable().await?;
+                            let _res = guard.try_io(|fd| {
                                 match unistd::write(fd.get_ref(), &data) {
-                                    Ok(n) => {},
-                                    Err(_) => todo!(),
+                                    Ok(n) => println!("wrote {n} bytes to pty"),
+                                    Err(e) => error!("error writing to pty: {}", e),
                                 };
                                 Ok(())
-                            }).unwrap();
+                            }).map_err(|_e| GenericMasterError("failed to write to master fd".to_owned()))?;
                         }
                     }
                 }
+                #[allow(unreachable_code)]
+                Ok::<(), RemuxDaemonError>(())
             });
 
             let tcp_task = tokio::spawn(async move {
@@ -127,21 +144,37 @@ async fn run_pty(mut stream: TcpStream) -> Result<(), RemuxDaemonError> {
                 loop {
                     tokio::select! {
                         Ok(n) = stream.read(&mut buf) => {
-                            send_to_pty.send(buf[..n].to_vec()).await.unwrap();
+                            if n > 0 {
+                                send_to_pty.send(buf[..n].to_vec()).map_err(|_e| GenericMasterError("could not send to pty".to_owned()))?;
+                            } else {
+                                info!("Tcp client disconnected");
+                                break;
+                            }
                         },
                         Some(mut data) = recv_for_tcp.recv() => {
+                            info!("writing to tcp: {}", String::from_utf8(data.clone()).unwrap());
                             stream.write_all(&mut data).await.unwrap();
                         }
                     }
                 }
+                #[allow(unreachable_code)]
+                Ok::<(), RemuxDaemonError>(())
             });
 
-            tokio::try_join!(pty_fd_task, tcp_task)?;
+            let (pty_res, tcp_res) = tokio::try_join!(pty_fd_task, tcp_task)?;
+            if pty_res.is_err() {
+                error!("error in pty task: {}", pty_res.err().unwrap());
+            }
+            if tcp_res.is_err() {
+                error!("error in tcp task: {}", tcp_res.err().unwrap());
+            }
             Ok(())
         }
         Child => {
-            Command::new("/bin/bash").spawn()?;
-            Ok(())
+            // exec bash
+            let cmd = CString::new("/bin/bash").unwrap();
+            execvp(&cmd, &[cmd.clone()]).unwrap();
+            unreachable!();
         }
     }
 }
@@ -149,6 +182,5 @@ async fn run_pty(mut stream: TcpStream) -> Result<(), RemuxDaemonError> {
 #[cfg(test)]
 mod test {
     #[tokio::test]
-    async fn name() {
-    }
+    async fn name() {}
 }

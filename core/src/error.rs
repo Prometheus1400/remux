@@ -7,5 +7,4 @@ pub enum RemuxLibError {
 
     #[error("Serialization/Deserialization error: {0}")]
     SerializationError(#[from] serde_json::Error),
-
 }
