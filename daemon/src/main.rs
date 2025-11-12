@@ -2,7 +2,7 @@ mod daemon;
 mod error;
 
 use daemon::RemuxDaemon;
-use tracing::{error, info, instrument};
+use tracing::{error, info};
 use tracing_subscriber::FmtSubscriber;
 
 use crate::error::RemuxDaemonError;

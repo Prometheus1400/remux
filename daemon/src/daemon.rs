@@ -7,27 +7,24 @@ use pty::{
     ForkptyResult::{Child, Parent},
     forkpty,
 };
-use std::os::fd::FromRawFd;
 use std::{
     ffi::CString,
     fs::File,
     net::{IpAddr, Ipv6Addr, SocketAddr},
-    os::fd::{self, AsFd, AsRawFd},
-    time::Duration,
+    os::fd::{AsFd, AsRawFd},
 };
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt, unix::AsyncFd},
+    net::{TcpListener, TcpStream},
     sync::mpsc,
-    time::sleep,
 };
-use tracing::{error, info, instrument, warn};
+use tracing::{error, info, instrument};
 
 use crate::error::RemuxDaemonError::{self, GenericMasterError};
 use remux_core::{
     constants, daemon_utils,
     messages::{self, RemuxDaemonRequest},
 };
-use tokio::net::{TcpListener, TcpStream};
 
 #[derive(Debug)]
 pub struct RemuxDaemon {
