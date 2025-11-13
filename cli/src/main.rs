@@ -8,11 +8,11 @@ use remux_core::{
 };
 
 use error::RemuxCLIError::{self};
+use std::io::Read;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
 };
-use std::io::Read;
 use tracing::{debug, error, info, trace};
 
 #[tokio::main]
