@@ -1,3 +1,4 @@
+use core::error;
 use nix::{
     libc::{F_GETFL, F_SETFL, O_NONBLOCK, fcntl},
     pty,
@@ -12,11 +13,13 @@ use std::{
     fs::File,
     net::{IpAddr, Ipv6Addr, SocketAddr},
     os::fd::{AsFd, AsRawFd},
+    time::Duration,
 };
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt, unix::AsyncFd},
     net::{TcpListener, TcpStream},
     sync::mpsc,
+    time::sleep,
 };
 use tracing::{error, info, instrument};
 
@@ -77,6 +80,7 @@ async fn handle_communication(mut stream: TcpStream) -> Result<(), RemuxDaemonEr
 
 #[instrument]
 async fn run_pty(mut stream: TcpStream) -> Result<(), RemuxDaemonError> {
+    use tokio::sync::mpsc::unbounded_channel;
     // setsid()?;
     let fork_result = unsafe { forkpty(None, None)? };
     match fork_result {
@@ -87,52 +91,65 @@ async fn run_pty(mut stream: TcpStream) -> Result<(), RemuxDaemonError> {
         Parent { child, master } => {
             info!("parent PID: {}", master.as_fd().as_raw_fd());
             info!("child PID: {}", child.as_raw());
-            let (send_to_pty, mut recv_for_pty) = mpsc::unbounded_channel::<Vec<u8>>();
-            let (send_to_tcp, mut recv_for_tcp) = mpsc::unbounded_channel::<Vec<u8>>();
+            let (send_to_pty, mut recv_for_pty) = unbounded_channel::<Vec<u8>>();
+            let (send_to_tcp, mut recv_for_tcp) = unbounded_channel::<Vec<u8>>();
 
             let fd = master.as_raw_fd();
-            unsafe {
-                // Get current flags
-                let flags = fcntl(fd, F_GETFL);
-                // Set non-blocking flag
-                let new_flags = flags | O_NONBLOCK;
-                fcntl(fd, F_SETFL, new_flags);
+            let flags = unsafe { fcntl(fd, F_GETFL) };
+            if flags < 0 {
+                return Err(RemuxDaemonError::FDError("flag error".into()));
             }
-            let async_fd = AsyncFd::new(master)?;
+            let res = unsafe { fcntl(fd, F_SETFL, flags | O_NONBLOCK) };
+            if res < 0 {
+                return Err(RemuxDaemonError::FDError("fcntl error".into()));
+            }
 
             let pty_fd_task = tokio::spawn(async move {
+                let async_fd = AsyncFd::new(master)?;
                 loop {
                     tokio::select! {
                         // read from PTY
                         Ok(mut guard) = async_fd.readable() => {
+                            info!("here1");
                             let mut buf = [0u8; 1024];
                             match guard.try_io(|fd| unistd::read(fd.get_ref(), &mut buf).map_err(|e| e.into())) {
                                 Ok(Ok(n)) if n > 0 => {
                                     send_to_tcp.send(buf[..n].to_vec()).map_err(|_e| GenericMasterError("couldn't send to tcp".into()))?;
                                 },
                                 Ok(Ok(_)) => {
-                                    break;
+                                    info!("stopping pty task");
+                                    break; // exit out of the loop - fd is closed
                                 },
                                 Ok(Err(e)) => {
                                     error!("Error reading: {e}");
                                 },
-                                Err(_would_block) => {continue;},
+                                Err(_would_block) => {
+                                    continue;},
                             }
                         },
                         // write to PTY
-                        Some(data) = recv_for_pty.recv() => {
-                            let mut guard = async_fd.writable().await?;
-                            let _res = guard.try_io(|fd| {
-                                match unistd::write(fd.get_ref(), &data) {
-                                    Ok(n) => println!("wrote {n} bytes to pty"),
-                                    Err(e) => error!("error writing to pty: {}", e),
-                                };
-                                Ok(())
-                            }).map_err(|_e| GenericMasterError("failed to write to master fd".to_owned()))?;
-                        }
+                        data_opt = recv_for_pty.recv() => {
+                            match data_opt {
+                                Some(data) => {
+                                    let mut guard = async_fd.writable().await?;
+                                    let _res = guard.try_io(|fd| {
+                                        match unistd::write(fd.get_ref(), &data) {
+                                            Ok(n) if n > 0 => info!("wrote {n} bytes to pty"),
+                                            Ok(_) => info!("wrote 0 bytes to pty"),
+                                            Err(e) => error!("error writing to pty: {}", e),
+                                        };
+                                        Ok(())
+                                    }).map_err(|_e| GenericMasterError("failed to write to master fd".to_owned()))?;
+                                },
+                                None => {
+                                    // None means sender closed the channel (via RAII from tcp_task ending)
+                                    info!("stopping pty task");
+                                    break;
+                                },
+                            }
+                        },
                     }
                 }
-                #[allow(unreachable_code)]
                 Ok::<(), RemuxDaemonError>(())
             });
 
@@ -148,13 +165,22 @@ async fn run_pty(mut stream: TcpStream) -> Result<(), RemuxDaemonError> {
                                 break;
                             }
                         },
-                        Some(data) = recv_for_tcp.recv() => {
-                            info!("writing to tcp: {}", String::from_utf8(data.clone()).unwrap());
-                            stream.write_all(&data).await.unwrap();
-                        }
+                        //
+                        data_opt = recv_for_tcp.recv() => {
+                            match data_opt{
+                                Some(data) => {
+                                    info!("writing to tcp: {}", String::from_utf8(data.clone()).unwrap());
+                                    stream.write_all(&data).await.unwrap();
+                                },
+                                None => {
+                                    // None means sender closed the channel (via RAII from pty_fd_task ending)
+                                    info!("stopping tcp task");
+                                    break;
+                                },
+                            }
+                        },
                     }
                 }
-                #[allow(unreachable_code)]
                 Ok::<(), RemuxDaemonError>(())
             });
 
@@ -165,6 +191,7 @@ async fn run_pty(mut stream: TcpStream) -> Result<(), RemuxDaemonError> {
             if tcp_res.is_err() {
                 error!("error in tcp task: {}", tcp_res.err().unwrap());
             }
+            info!("pty ran to completion");
             Ok(())
         }
         Child => {

@@ -8,11 +8,12 @@ use remux_core::{
 };
 
 use error::RemuxCLIError::{self};
+use std::io::Read;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
 };
-use tracing::{debug, error, trace};
+use tracing::{debug, error, info, trace};
 
 #[tokio::main]
 async fn main() {
@@ -56,6 +57,8 @@ async fn run() -> Result<(), RemuxCLIError> {
     debug!("Sent connect request successfully");
 
     let (send_to_tcp, mut recv_for_tcp) = tokio::sync::mpsc::unbounded_channel::<u8>();
+    let (send_cancel_stdin_task, mut recv_cancel_stdin_task) =
+        tokio::sync::mpsc::unbounded_channel::<u8>();
     enable_raw_mode()?;
 
     let tcp_task = tokio::spawn(async move {
@@ -70,49 +73,70 @@ async fn run() -> Result<(), RemuxCLIError> {
                         stdout.flush().await?;
                     } else {
                         // stream closed
-                        return Ok(());
+                        break;
                     }
                 },
-                Some(b) = recv_for_tcp.recv() => {
-                    trace!("Sending byte '{}' to tcp stream", b);
-                    stream.write_u8(b).await?;
+                b_opt = recv_for_tcp.recv() => {
+                    match b_opt{
+                        Some(b) => {
+                            trace!("Sending byte '{}' to tcp stream", b);
+                            stream.write_u8(b).await?;
+                        },
+                        None => {
+                            debug!("channel closed");
+                            break;
+                        },
+                    }
                 }
             }
         }
-        #[allow(unreachable_code)]
+        info!("closing tcp task");
+        send_cancel_stdin_task.send(1)?;
         Ok::<(), RemuxCLIError>(())
     });
 
     let stdin_task = tokio::spawn(async move {
-        let mut stdin = tokio::io::stdin();
+        let mut stdin = tokio::io::stdin(); // read here
         let mut buf = [0u8; 1024];
         loop {
-            match stdin.read(&mut buf).await {
-                Ok(n) if n > 0 => {
-                    trace!("Sending {n} bytes to daemon");
-                    for &b in &buf[..n] {
-                        send_to_tcp.send(b)?;
+            tokio::select! {
+                // after all tasks exit the read is still blocked under the hood so it needs some
+                // keypress to trigger the release
+                stdin_res = stdin.read(&mut buf) => {
+                    match stdin_res {
+                        Ok(n) if n > 0 => {
+                            trace!("Sending {n} bytes to daemon");
+                            for &b in &buf[..n] {
+                                send_to_tcp.send(b).inspect_err(|e| {
+                                    info!("send error: {e}");
+                                })?;
+                            }
+                        }
+                        Ok(_) => {
+                            debug!("stream closed");
+                            break; // stream is closed
+                        }
+                        Err(e) => {
+                            error!("Error reading from stdin: {e}");
+                            continue;
+                        }
                     }
-                }
-                Ok(_) => {
-                    continue;
-                }
-                Err(e) => {
-                    error!("Error reading from stdin: {e}");
-                    continue;
+                },
+                Some(_) = recv_cancel_stdin_task.recv() => {
+                    break;
                 }
             }
         }
-        #[allow(unreachable_code)]
+        info!("closing stdin task");
         Ok::<(), RemuxCLIError>(())
     });
 
     if let Err(e) = tokio::try_join!(tcp_task, stdin_task) {
         error!("error joining tokio tasks: {e}");
         disable_raw_mode()?;
-        return Err(e.into());
+        Err(e.into())
+    } else {
+        disable_raw_mode()?;
+        Ok(())
     }
-
-    disable_raw_mode()?;
-    Ok(())
 }
