@@ -28,4 +28,10 @@ pub enum RemuxDaemonError {
 
     #[error("Join Error: {0}")]
     JoinError(#[from] tokio::task::JoinError),
+
+    #[error("Send Error: {0}")]
+    SendError(#[from] tokio::sync::mpsc::error::SendError<bool>),
+
+    #[error("File descriptor error: {0}")]
+    FDError(String),
 }

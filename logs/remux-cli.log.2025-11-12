@@ -1,6 +1,0 @@
-[2m2025-11-12T01:17:37.094696Z[0m [34mDEBUG[0m [2mremux_cli[0m[2m:[0m Connecting to [::1]:12345
-[2m2025-11-12T01:17:37.095023Z[0m [34mDEBUG[0m [2mremux_cli[0m[2m:[0m Sending connect request
-[2m2025-11-12T01:17:37.095060Z[0m [34mDEBUG[0m [2mremux_cli[0m[2m:[0m Sent connect request successfully
-[2m2025-11-12T01:19:12.441297Z[0m [34mDEBUG[0m [2mremux_cli[0m[2m:[0m Connecting to [::1]:12345
-[2m2025-11-12T01:19:12.441662Z[0m [34mDEBUG[0m [2mremux_cli[0m[2m:[0m Sending connect request
-[2m2025-11-12T01:19:12.441716Z[0m [34mDEBUG[0m [2mremux_cli[0m[2m:[0m Sent connect request successfully
