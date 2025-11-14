@@ -40,7 +40,7 @@ impl RemuxDaemon {
 
     #[instrument(skip(self))]
     pub async fn listen(&self) -> Result<(), RemuxDaemonError> {
-        let socket_path = get_sock_path().map_err(|e| RemuxDaemonError::SocketError(e))?;
+        let socket_path = get_sock_path().map_err(|e| RemuxDaemonError::UnixSocketError(e))?;
 
         if socket_path.exists() {
             remove_file(&socket_path)?;

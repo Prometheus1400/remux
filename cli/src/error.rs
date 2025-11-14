@@ -21,5 +21,5 @@ pub enum RemuxCLIError {
     UTF8Error(#[from] std::str::Utf8Error),
 
     #[error("Socket Error: {0}")]
-    SocketError(String),
+    SocketError(remux_core::error::RemuxLibError),
 }

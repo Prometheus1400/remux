@@ -44,6 +44,8 @@ where
 
 #[cfg(test)]
 mod test {
+    use std::{fs::remove_file, path::PathBuf};
+
     use crate::constants::TEMP_SOCK_DIR;
 
     use super::*;
@@ -52,7 +54,12 @@ mod test {
     #[tokio::test]
     async fn test_tcp_message() {
         // Bind server
-        let listener = UnixListener::bind(TEMP_SOCK_DIR).unwrap();
+        let temp_dir = PathBuf::from(TEMP_SOCK_DIR);
+        if temp_dir.exists() {
+            remove_file(&temp_dir).unwrap();
+        }
+
+        let listener = UnixListener::bind(temp_dir).unwrap();
         let addr = listener.local_addr().unwrap();
 
         // Spawn server

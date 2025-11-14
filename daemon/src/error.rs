@@ -20,9 +20,6 @@ pub enum RemuxDaemonError {
     #[error("Generic Master Error: {0}")]
     GenericMasterError(String),
 
-    #[error("Generic Unix Error: {0}")]
-    GenericUnixError(String),
-
     #[error("Slave Error: {0}")]
     SlaveError(#[from] pty::fork::SlaveError),
 
@@ -35,6 +32,6 @@ pub enum RemuxDaemonError {
     #[error("File descriptor error: {0}")]
     FDError(String),
 
-    #[error("Socket Error: {0}")]
-    SocketError(String),
+    #[error("Unix Socket Error: {0}")]
+    UnixSocketError(remux_core::error::RemuxLibError),
 }

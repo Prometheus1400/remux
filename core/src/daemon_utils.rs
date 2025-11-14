@@ -23,7 +23,7 @@ pub fn lock_daemon_file() -> Result<File, RemuxLibError> {
     Ok(file)
 }
 
-pub fn get_sock_path() -> Result<PathBuf, String> {
+pub fn get_sock_path() -> Result<PathBuf, RemuxLibError> {
     // For linux systems
     if let Ok(runtime_dir) = var(RUNTIME_DIR) {
         return Ok(PathBuf::from(runtime_dir).join("remux.sock"));
@@ -33,13 +33,15 @@ pub fn get_sock_path() -> Result<PathBuf, String> {
         let path = PathBuf::from(home_dir).join(".remux/run/remux.sock");
 
         if let Some(parent) = path.parent() {
-            create_dir_all(parent).map_err(|e| e.to_string())?;
+            create_dir_all(parent).map_err(|e| RemuxLibError::DaemonFileError(e))?;
         }
 
         return Ok(path);
     }
 
-    Err("Could not determine socket path: neither XDG_RUNTIME_DIR nor HOME are set".to_string())
+    Err(RemuxLibError::UnixSocketError(
+        "Could not determine socket path: neither XDG_RUNTIME_DIR nor HOME are set".to_string(),
+    ))
 }
 
 #[cfg(test)]
