@@ -1,7 +1,9 @@
 use thiserror::Error;
+ 
+pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Error, Debug)]
-pub enum RemuxCLIError {
+pub enum Error {
     #[error("Error interacting with terminal: {0}")]
     IOError(#[from] std::io::Error),
 
@@ -12,7 +14,7 @@ pub enum RemuxCLIError {
     LoggerError(#[from] tracing::subscriber::SetGlobalDefaultError),
 
     #[error("Error using remux lib: {0}")]
-    LibError(#[from] remux_core::error::RemuxLibError),
+    LibError(#[from] remux_core::error::Error),
 
     #[error("Error joining tokio tasks: {0}")]
     JoinError(#[from] tokio::task::JoinError),
@@ -21,5 +23,5 @@ pub enum RemuxCLIError {
     UTF8Error(#[from] std::str::Utf8Error),
 
     #[error("Socket Error: {0}")]
-    SocketError(remux_core::error::RemuxLibError),
+    SocketError(remux_core::error::Error),
 }

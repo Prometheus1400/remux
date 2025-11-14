@@ -5,9 +5,9 @@ use daemon::RemuxDaemon;
 use tracing::{error, info};
 use tracing_subscriber::FmtSubscriber;
 
-use crate::error::RemuxDaemonError;
+use crate::error::Result;
 
-async fn run() -> Result<(), RemuxDaemonError> {
+async fn run() -> Result<()> {
     let subscriber = FmtSubscriber::builder()
         .with_max_level(tracing::Level::DEBUG)
         .finish();

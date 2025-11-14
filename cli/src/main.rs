@@ -6,7 +6,7 @@ use remux_core::{
     messages::{self, RemuxDaemonRequest},
 };
 
-use error::RemuxCLIError::{self};
+use crate::error::{Error, Result};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::UnixStream,
@@ -29,7 +29,7 @@ async fn main() {
     };
 }
 
-fn setup_logging() -> Result<tracing_appender::non_blocking::WorkerGuard, RemuxCLIError> {
+fn setup_logging() -> Result<tracing_appender::non_blocking::WorkerGuard> {
     use tracing_appender::{non_blocking, rolling};
     use tracing_subscriber::{EnvFilter, fmt};
 
@@ -46,8 +46,8 @@ fn setup_logging() -> Result<tracing_appender::non_blocking::WorkerGuard, RemuxC
     Ok(guard)
 }
 
-async fn run() -> Result<(), RemuxCLIError> {
-    let socket_path = get_sock_path().map_err(|e| RemuxCLIError::SocketError(e))?;
+async fn run() -> Result<()> {
+    let socket_path = get_sock_path().map_err(|e| Error::SocketError(e))?;
     debug!("Connecting to {:?}", socket_path);
     let mut stream = UnixStream::connect(socket_path).await?;
     debug!("Sending connect request");
@@ -59,7 +59,7 @@ async fn run() -> Result<(), RemuxCLIError> {
         tokio::sync::mpsc::unbounded_channel::<u8>();
     enable_raw_mode()?;
 
-    let tcp_task = tokio::spawn(async move {
+    let tcp_task: tokio::task::JoinHandle<std::result::Result<_, Error>> = tokio::spawn(async move {
         let mut stdout = tokio::io::stdout();
         let mut buf = [0u8; 1024];
         loop {
@@ -90,10 +90,10 @@ async fn run() -> Result<(), RemuxCLIError> {
         }
         info!("closing tcp task");
         send_cancel_stdin_task.send(1)?;
-        Ok::<(), RemuxCLIError>(())
+        Ok(())
     });
 
-    let stdin_task = tokio::spawn(async move {
+    let stdin_task: tokio::task::JoinHandle<std::result::Result<_, Error>> = tokio::spawn(async move {
         let mut stdin = tokio::io::stdin(); // read here
         let mut buf = [0u8; 1024];
         loop {
@@ -126,7 +126,7 @@ async fn run() -> Result<(), RemuxCLIError> {
             }
         }
         info!("closing stdin task");
-        Ok::<(), RemuxCLIError>(())
+        Ok(())
     });
 
     if let Err(e) = tokio::try_join!(tcp_task, stdin_task) {

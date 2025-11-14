@@ -1,9 +1,14 @@
 use thiserror::Error;
 
+pub type Result<T> = std::result::Result<T, Error>;
+
 #[derive(Error, Debug)]
-pub enum RemuxDaemonError {
+pub enum Error {
+    #[error("Error: {0}")]
+    Custom(String),
+    
     #[error("Cannot spawn another remux daemon: {0}")]
-    DuplicateProcess(#[from] remux_core::error::RemuxLibError),
+    DuplicateProcess(#[from] remux_core::error::Error),
 
     #[error("IO Error: {0}")]
     IOError(#[from] std::io::Error),
@@ -16,9 +21,6 @@ pub enum RemuxDaemonError {
 
     #[error("Master Error: {0}")]
     MasterError(#[from] pty::fork::MasterError),
-
-    #[error("Generic Master Error: {0}")]
-    GenericMasterError(String),
 
     #[error("Slave Error: {0}")]
     SlaveError(#[from] pty::fork::SlaveError),
@@ -33,5 +35,11 @@ pub enum RemuxDaemonError {
     FDError(String),
 
     #[error("Unix Socket Error: {0}")]
-    UnixSocketError(remux_core::error::RemuxLibError),
+    UnixSocketError(remux_core::error::Error),
+
+    #[error("UTF8Error: {0}")]
+    StringError(#[from] std::string::FromUtf8Error),
+
+    #[error("NulError: {0}")]
+    CStringError(#[from] std::ffi::NulError),
 }
