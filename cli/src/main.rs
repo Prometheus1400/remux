@@ -1,17 +1,15 @@
 mod error;
-use std::net::{IpAddr, Ipv6Addr, SocketAddr};
 
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use remux_core::{
-    constants,
     messages::{self, RemuxDaemonRequest},
+    daemon_utils::get_sock_path
 };
 
 use error::RemuxCLIError::{self};
-use std::io::Read;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
-    net::TcpStream,
+    net::UnixStream,
 };
 use tracing::{debug, error, info, trace};
 
@@ -49,9 +47,9 @@ fn setup_logging() -> Result<tracing_appender::non_blocking::WorkerGuard, RemuxC
 }
 
 async fn run() -> Result<(), RemuxCLIError> {
-    let addr = SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), constants::PORT);
-    debug!("Connecting to {addr}");
-    let mut stream = TcpStream::connect(addr).await?;
+    let socket_path = get_sock_path().map_err(|e| RemuxCLIError::SocketError(e))?;
+    debug!("Connecting to {:?}", socket_path);
+    let mut stream = UnixStream::connect(socket_path).await?;
     debug!("Sending connect request");
     messages::write_message(&mut stream, RemuxDaemonRequest::Connect).await?;
     debug!("Sent connect request successfully");

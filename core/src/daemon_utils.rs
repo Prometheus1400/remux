@@ -1,6 +1,8 @@
-use std::fs::File;
+use std::env::var;
+use std::fs::{File, create_dir_all};
+use std::path::PathBuf;
 
-use crate::constants;
+use crate::constants::{self, HOME_DIR, RUNTIME_DIR};
 use crate::error::RemuxLibError;
 use fs2::FileExt;
 
@@ -19,6 +21,25 @@ pub fn lock_daemon_file() -> Result<File, RemuxLibError> {
     let file = get_daemon_file()?;
     file.try_lock_exclusive()?;
     Ok(file)
+}
+
+pub fn get_sock_path() -> Result<PathBuf, String> {
+    // For linux systems
+    if let Ok(runtime_dir) = var(RUNTIME_DIR) {
+        return Ok(PathBuf::from(runtime_dir).join("remux.sock"));
+    }
+
+    if let Ok(home_dir) = var(HOME_DIR) {
+        let path = PathBuf::from(home_dir).join(".remux/run/remux.sock");
+
+        if let Some(parent) = path.parent() {
+            create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+
+        return Ok(path);
+    }
+
+    Err("Could not determine socket path: neither XDG_RUNTIME_DIR nor HOME are set".to_string())
 }
 
 #[cfg(test)]

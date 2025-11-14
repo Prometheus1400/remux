@@ -1,4 +1,3 @@
-use core::error;
 use nix::{
     libc::{F_GETFL, F_SETFL, O_NONBLOCK, fcntl},
     pty,
@@ -10,28 +9,23 @@ use pty::{
 };
 use std::{
     ffi::CString,
-    fs::File,
-    net::{IpAddr, Ipv6Addr, SocketAddr},
+    fs::{File, remove_file},
     os::fd::{AsFd, AsRawFd},
-    time::Duration,
 };
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt, unix::AsyncFd},
-    net::{TcpListener, TcpStream},
-    sync::mpsc,
-    time::sleep,
+    net::{UnixListener, UnixStream},
 };
 use tracing::{error, info, instrument};
 
 use crate::error::RemuxDaemonError::{self, GenericMasterError};
 use remux_core::{
-    constants, daemon_utils,
     messages::{self, RemuxDaemonRequest},
+    daemon_utils::{lock_daemon_file, get_sock_path}
 };
 
 #[derive(Debug)]
 pub struct RemuxDaemon {
-    port: u16,          // port the daemon is listening on for IPC
     _daemon_file: File, // daemon must hold the exclusive file lock while it is alive and running
 }
 
@@ -40,17 +34,23 @@ impl RemuxDaemon {
     /// process level through use of OS level file locks
     pub fn new() -> Result<Self, RemuxDaemonError> {
         Ok(Self {
-            port: constants::PORT,
-            _daemon_file: daemon_utils::lock_daemon_file()?,
+            _daemon_file: lock_daemon_file()?,
         })
     }
 
     #[instrument(skip(self))]
     pub async fn listen(&self) -> Result<(), RemuxDaemonError> {
-        let listener = TcpListener::bind(self.get_sock_addr()).await?;
+        let socket_path = get_sock_path().map_err(|e| RemuxDaemonError::SocketError(e))?;
+
+        if socket_path.exists() {
+            remove_file(&socket_path)?;
+        }
+
+        info!("unix socket path: {:?}", socket_path);
+        let listener = UnixListener::bind(socket_path)?;
         loop {
             let (stream, addr) = listener.accept().await?;
-            info!("accepting connection from: {}", addr);
+            info!("accepting connection from: {:?}", addr.as_pathname());
             tokio::spawn(async move {
                 if let Err(e) = handle_communication(stream).await {
                     error!("{e}");
@@ -58,14 +58,10 @@ impl RemuxDaemon {
             });
         }
     }
-
-    fn get_sock_addr(&self) -> SocketAddr {
-        SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), self.port)
-    }
 }
 
 #[instrument]
-async fn handle_communication(mut stream: TcpStream) -> Result<(), RemuxDaemonError> {
+async fn handle_communication(mut stream: UnixStream) -> Result<(), RemuxDaemonError> {
     loop {
         let message: RemuxDaemonRequest = messages::read_message(&mut stream).await.unwrap();
         match message {
@@ -79,7 +75,7 @@ async fn handle_communication(mut stream: TcpStream) -> Result<(), RemuxDaemonEr
 }
 
 #[instrument]
-async fn run_pty(mut stream: TcpStream) -> Result<(), RemuxDaemonError> {
+async fn run_pty(mut stream: UnixStream) -> Result<(), RemuxDaemonError> {
     use tokio::sync::mpsc::unbounded_channel;
     // setsid()?;
     let fork_result = unsafe { forkpty(None, None)? };
