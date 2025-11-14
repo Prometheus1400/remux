@@ -36,5 +36,5 @@ pub enum RemuxDaemonError {
     FDError(String),
 
     #[error("Socket Error: {0}")]
-    SocketError(String)
+    SocketError(String),
 }

@@ -20,8 +20,8 @@ use tracing::{error, info, instrument};
 
 use crate::error::RemuxDaemonError::{self, GenericMasterError};
 use remux_core::{
+    daemon_utils::{get_sock_path, lock_daemon_file},
     messages::{self, RemuxDaemonRequest},
-    daemon_utils::{lock_daemon_file, get_sock_path}
 };
 
 #[derive(Debug)]

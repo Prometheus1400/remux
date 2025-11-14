@@ -47,7 +47,7 @@ mod test {
     use crate::constants::TEMP_SOCK_DIR;
 
     use super::*;
-    use tokio::net::{UnixListener};
+    use tokio::net::UnixListener;
 
     #[tokio::test]
     async fn test_tcp_message() {
@@ -65,7 +65,10 @@ mod test {
         });
 
         // Connect client
-        let mut client = UnixStream::connect(addr.as_pathname().expect("Socket file could not be found")).await.unwrap();
+        let mut client =
+            UnixStream::connect(addr.as_pathname().expect("Socket file could not be found"))
+                .await
+                .unwrap();
         write_message(&mut client, RemuxDaemonRequest::Connect)
             .await
             .unwrap();

@@ -2,8 +2,8 @@ mod error;
 
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use remux_core::{
+    daemon_utils::get_sock_path,
     messages::{self, RemuxDaemonRequest},
-    daemon_utils::get_sock_path
 };
 
 use error::RemuxCLIError::{self};
