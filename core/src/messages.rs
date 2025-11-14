@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWriteExt},
-    net::TcpStream,
+    net::UnixStream,
 };
 
 use crate::error::RemuxLibError;
@@ -15,7 +15,7 @@ pub enum RemuxDaemonRequest {
 pub enum RemuxDaemonResponse {}
 
 pub async fn write_message<T: Serialize>(
-    stream: &mut TcpStream,
+    stream: &mut UnixStream,
     message: T,
 ) -> Result<(), RemuxLibError> {
     let bytes = serde_json::to_vec(&message).unwrap();
@@ -44,13 +44,22 @@ where
 
 #[cfg(test)]
 mod test {
+    use std::{fs::remove_file, path::PathBuf};
+
+    use crate::constants::TEMP_SOCK_DIR;
+
     use super::*;
-    use tokio::net::TcpListener;
+    use tokio::net::UnixListener;
 
     #[tokio::test]
     async fn test_tcp_message() {
         // Bind server
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let temp_dir = PathBuf::from(TEMP_SOCK_DIR);
+        if temp_dir.exists() {
+            remove_file(&temp_dir).unwrap();
+        }
+
+        let listener = UnixListener::bind(temp_dir).unwrap();
         let addr = listener.local_addr().unwrap();
 
         // Spawn server
@@ -63,7 +72,10 @@ mod test {
         });
 
         // Connect client
-        let mut client = TcpStream::connect(addr).await.unwrap();
+        let mut client =
+            UnixStream::connect(addr.as_pathname().expect("Socket file could not be found"))
+                .await
+                .unwrap();
         write_message(&mut client, RemuxDaemonRequest::Connect)
             .await
             .unwrap();

@@ -19,4 +19,7 @@ pub enum RemuxCLIError {
 
     #[error("Error converting bytes to utf8 string: {0}")]
     UTF8Error(#[from] std::str::Utf8Error),
+
+    #[error("Socket Error: {0}")]
+    SocketError(remux_core::error::RemuxLibError),
 }
