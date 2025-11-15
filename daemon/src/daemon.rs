@@ -23,11 +23,16 @@ use tokio::{
 };
 use tracing::{error, info, instrument};
 
-use crate::error::{Error, Result};
+use crate::{
+    error::{Error, Result},
+    pane::{Focused, Hidden, Pane},
+};
 
-#[derive(Debug)]
 pub struct RemuxDaemon {
     _daemon_file: File, // daemon must hold the exclusive file lock while it is alive and running
+
+    focused_pane: Pane<Focused>,
+    hidden_panes: Vec<Pane<Hidden>>,
 }
 
 impl RemuxDaemon {
@@ -59,6 +64,7 @@ impl RemuxDaemon {
             });
         }
     }
+
 }
 
 #[instrument]
@@ -67,10 +73,14 @@ async fn handle_communication(mut stream: UnixStream) -> Result<()> {
         let message: RemuxDaemonRequest = messages::read_message(&mut stream).await?;
         match message {
             RemuxDaemonRequest::Connect => {
+                // TODO: reattach with active pane
                 run_pty(stream).await?;
                 return Ok(());
             }
             RemuxDaemonRequest::Disconnect => todo!(),
+            RemuxDaemonRequest::NewPane => todo!(),
+            RemuxDaemonRequest::CyclePane => todo!(),
+            RemuxDaemonRequest::KillPane => todo!(),
         }
     }
 }

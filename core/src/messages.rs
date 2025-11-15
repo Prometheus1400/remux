@@ -11,6 +11,11 @@ pub use crate::error::{Error, Result};
 pub enum RemuxDaemonRequest {
     Connect,
     Disconnect,
+
+    // pane commands
+    NewPane,
+    CyclePane, // probably temporary
+    KillPane,
 }
 
 pub enum RemuxDaemonResponse {}
