@@ -11,7 +11,7 @@ async fn run() -> Result<()> {
     let subscriber = FmtSubscriber::builder()
         .with_max_level(tracing::Level::DEBUG)
         .finish();
-    tracing::subscriber::set_global_default(subscriber).unwrap();
+    tracing::subscriber::set_global_default(subscriber)?;
 
     info!("daemon started");
     let daemon = RemuxDaemon::new()?;

@@ -4,9 +4,11 @@ use tokio::{
     net::UnixStream,
 };
 
+use derive_more::Display;
+
 pub use crate::error::{Error, Result};
 
-#[derive(Serialize, Deserialize, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Display)]
 pub enum RemuxDaemonRequest {
     Connect,
     Disconnect,
@@ -14,11 +16,8 @@ pub enum RemuxDaemonRequest {
 
 pub enum RemuxDaemonResponse {}
 
-pub async fn write_message<T: Serialize>(
-    stream: &mut UnixStream,
-    message: T,
-) -> Result<()> {
-    let bytes = serde_json::to_vec(&message)?;
+pub async fn write_message<T: Serialize>(stream: &mut UnixStream, message: &T) -> Result<()> {
+    let bytes = serde_json::to_vec(message)?;
     let num_bytes = bytes.len() as u32;
 
     let _written = stream.write(&num_bytes.to_be_bytes()).await?;
@@ -44,13 +43,10 @@ where
 
 #[cfg(test)]
 mod test {
-    type Error = Box<dyn std::error::Error + Send + Sync>;
-    type Result<T> = std::result::Result<T, Error>;
-    use std::{fs::remove_file, path::PathBuf};
-
-    use crate::constants::TEMP_SOCK_DIR;
-
+    #![allow(clippy::unwrap_used)]
     use super::*;
+    use crate::constants::TEMP_SOCK_DIR;
+    use std::{fs::remove_file, path::PathBuf};
     use tokio::net::UnixListener;
 
     #[tokio::test]
@@ -76,10 +72,16 @@ mod test {
         });
 
         // Connect client
-        let mut client =UnixStream::connect(addr.as_pathname().unwrap()).await?;
-        write_message(&mut client, RemuxDaemonRequest::Connect).await?;
-        write_message(&mut client, RemuxDaemonRequest::Disconnect).await?;
-        server.await?;
+        let mut client = UnixStream::connect(addr.as_pathname().unwrap())
+            .await
+            .unwrap();
+        write_message(&mut client, &RemuxDaemonRequest::Connect)
+            .await
+            .unwrap();
+        write_message(&mut client, &RemuxDaemonRequest::Disconnect)
+            .await
+            .unwrap();
+        server.await.unwrap()?;
 
         Ok(())
     }

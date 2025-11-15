@@ -1,27 +1,42 @@
+use remux_core::messages::RemuxDaemonRequest;
 use thiserror::Error;
- 
+
 pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Error, Debug)]
 pub enum Error {
-    #[error("Error interacting with terminal: {0}")]
-    IOError(#[from] std::io::Error),
-
-    #[error("Error sending to tokio channel: {0}")]
-    SendError(#[from] tokio::sync::mpsc::error::SendError<u8>),
-
-    #[error("Error initializing logger: {0}")]
-    LoggerError(#[from] tracing::subscriber::SetGlobalDefaultError),
+    #[error("Custom Error: {0}")]
+    Custom(String),
 
     #[error("Error using remux lib: {0}")]
-    LibError(#[from] remux_core::error::Error),
+    Lib(#[from] remux_core::error::Error),
+
+    #[error("Error initializing logger: {0}")]
+    Logger(#[from] tracing::subscriber::SetGlobalDefaultError),
 
     #[error("Error joining tokio tasks: {0}")]
-    JoinError(#[from] tokio::task::JoinError),
+    Join(#[from] tokio::task::JoinError),
 
-    #[error("Error converting bytes to utf8 string: {0}")]
-    UTF8Error(#[from] std::str::Utf8Error),
+    #[error("IO Error: {0}")]
+    IO(#[from] std::io::Error),
 
-    #[error("Socket Error: {0}")]
-    SocketError(remux_core::error::Error),
+    #[error("Error connecting to socket {socket_path}: {source}")]
+    ConnectingSocket {
+        socket_path: String,
+        source: std::io::Error,
+    },
+
+    #[error("Error sending message {message}: {source}")]
+    SendMessage {
+        message: RemuxDaemonRequest,
+        source: remux_core::error::Error,
+    },
+    // #[error("Error sending to tokio channel: {0}")]
+    // SendError(#[from] tokio::sync::mpsc::error::SendError<u8>),
+    //
+    // #[error("Error converting bytes to utf8 string: {0}")]
+    // UTF8Error(#[from] std::str::Utf8Error),
+    //
+    // #[error("Socket Error: {0}")]
+    // SocketError(remux_core::error::Error),
 }

@@ -33,7 +33,7 @@ pub fn get_sock_path() -> Result<PathBuf> {
         let path = PathBuf::from(home_dir).join(".remux/run/remux.sock");
 
         if let Some(parent) = path.parent() {
-            create_dir_all(parent).map_err(|e| Error::DaemonFileError(e))?;
+            create_dir_all(parent)?;
         }
 
         return Ok(path);
@@ -46,11 +46,9 @@ pub fn get_sock_path() -> Result<PathBuf> {
 
 #[cfg(test)]
 mod test {
-    type Error = Box<dyn std::error::Error>;
-    type Result<T> = std::result::Result<T, Error>;
-    use std::sync::{LazyLock, Mutex};
-
+    #![allow(clippy::unwrap_used)]
     use super::*;
+    use std::sync::{LazyLock, Mutex};
 
     static TEST_MUTEX: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
