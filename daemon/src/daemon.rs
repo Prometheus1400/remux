@@ -107,7 +107,6 @@ async fn run_pty(mut stream: UnixStream) -> Result<()> {
                         tokio::select! {
                             // read from PTY
                             Ok(mut guard) = async_fd.readable() => {
-                                info!("here1");
                                 let mut buf = [0u8; 1024];
                                 match guard.try_io(|fd| unistd::read(fd.get_ref(), &mut buf).map_err(|e| e.into())) {
                                     Ok(Ok(n)) if n > 0 => {
