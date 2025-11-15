@@ -1,0 +1,31 @@
+# Maximum line width before rustfmt wraps code onto multiple lines
+max_width = 100
+
+# Use hard tabs instead of spaces? (false = use spaces)
+hard_tabs = false
+
+# How aggressively rustfmt compresses code into single lines.
+# "Max" = least compact; rustfmt avoids putting things on one line.
+use_small_heuristics = "Default"
+
+# Group imports into standard, external, and crate-local groups
+group_imports = "StdExternalCrate"
+
+# How imports should be grouped/merged:
+# "Module" = merge imports by module path (e.g., use std::io::{Read, Write})
+imports_granularity = "Crate"
+
+# Reorder import statements alphabetically
+reorder_imports = true
+
+# Reorder module declarations alphabetically (`mod foo;`, etc.)
+reorder_modules = true
+
+# Force single-line function definitions when they fit
+fn_single_line = false
+
+# Put `where` clause on a single line if it fits
+where_single_line = false
+
+# Use Unix line endings ("\n")
+newline_style = "Unix"
