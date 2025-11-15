@@ -1,13 +1,15 @@
 use thiserror::Error;
 
-#[derive(Error, Debug)]
-pub enum RemuxLibError {
+pub type Result<T> = std::result::Result<T, Error>;
+
+#[derive(Debug, Error)]
+pub enum Error {
+    #[error("Custom error: {0}")]
+    Custom(String),
+
     #[error("IO error: {0}")]
-    DaemonFileError(#[from] std::io::Error),
+    IO(#[from] std::io::Error),
 
-    #[error("Serialization/Deserialization error: {0}")]
+    #[error("Serialization error: {0}")]
     SerializationError(#[from] serde_json::Error),
-
-    #[error("Socket error: {0}")]
-    UnixSocketError(String),
 }

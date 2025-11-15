@@ -6,7 +6,7 @@ use remux_core::{
     messages::{self, RemuxDaemonRequest},
 };
 
-use error::RemuxCLIError::{self};
+use crate::error::{Error, Result};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::UnixStream,
@@ -29,7 +29,7 @@ async fn main() {
     };
 }
 
-fn setup_logging() -> Result<tracing_appender::non_blocking::WorkerGuard, RemuxCLIError> {
+fn setup_logging() -> Result<tracing_appender::non_blocking::WorkerGuard> {
     use tracing_appender::{non_blocking, rolling};
     use tracing_subscriber::{EnvFilter, fmt};
 
@@ -46,88 +46,100 @@ fn setup_logging() -> Result<tracing_appender::non_blocking::WorkerGuard, RemuxC
     Ok(guard)
 }
 
-async fn run() -> Result<(), RemuxCLIError> {
-    let socket_path = get_sock_path().map_err(|e| RemuxCLIError::SocketError(e))?;
+async fn run() -> Result<()> {
+    let socket_path = get_sock_path()?;
     debug!("Connecting to {:?}", socket_path);
-    let mut stream = UnixStream::connect(socket_path).await?;
+    let mut stream = UnixStream::connect(socket_path.clone())
+        .await
+        .map_err(|source| Error::ConnectingSocket {
+            socket_path: socket_path.to_string_lossy().into_owned(),
+            source,
+        })?;
     debug!("Sending connect request");
-    messages::write_message(&mut stream, RemuxDaemonRequest::Connect).await?;
+    let message = RemuxDaemonRequest::Connect;
+    messages::write_message(&mut stream, &message)
+        .await
+        .map_err(|source| Error::SendMessage { message, source })?;
     debug!("Sent connect request successfully");
 
     let (send_to_tcp, mut recv_for_tcp) = tokio::sync::mpsc::unbounded_channel::<u8>();
     let (send_cancel_stdin_task, mut recv_cancel_stdin_task) =
         tokio::sync::mpsc::unbounded_channel::<u8>();
-    enable_raw_mode()?;
 
-    let tcp_task = tokio::spawn(async move {
-        let mut stdout = tokio::io::stdout();
-        let mut buf = [0u8; 1024];
-        loop {
-            tokio::select! {
-                Ok(n) = stream.read(&mut buf) => {
-                    if n > 0 {
-                        trace!("Read {n} bytes from daemon");
-                        stdout.write_all(&buf[..n]).await?;
-                        stdout.flush().await?;
-                    } else {
-                        // stream closed
-                        break;
-                    }
-                },
-                b_opt = recv_for_tcp.recv() => {
-                    match b_opt{
-                        Some(b) => {
-                            trace!("Sending byte '{}' to tcp stream", b);
-                            stream.write_u8(b).await?;
-                        },
-                        None => {
-                            debug!("channel closed");
+    enable_raw_mode()?;
+    let tcp_task: tokio::task::JoinHandle<std::result::Result<_, Error>> =
+        tokio::spawn(async move {
+            let mut stdout = tokio::io::stdout();
+            let mut buf = [0u8; 1024];
+            loop {
+                tokio::select! {
+                    Ok(n) = stream.read(&mut buf) => {
+                        if n > 0 {
+                            trace!("Read {n} bytes from daemon");
+                            stdout.write_all(&buf[..n]).await?;
+                            stdout.flush().await?;
+                        } else {
+                            // stream closed
                             break;
-                        },
+                        }
+                    },
+                    b_opt = recv_for_tcp.recv() => {
+                        match b_opt{
+                            Some(b) => {
+                                trace!("Sending byte '{}' to tcp stream", b);
+                                stream.write_u8(b).await?;
+                            },
+                            None => {
+                                debug!("channel closed");
+                                break;
+                            },
+                        }
                     }
                 }
             }
-        }
-        info!("closing tcp task");
-        send_cancel_stdin_task.send(1)?;
-        Ok::<(), RemuxCLIError>(())
-    });
+            info!("closing tcp task");
+            send_cancel_stdin_task
+                .send(1)
+                .map_err(|_| Error::Custom("can't send to cancel stdin channel".to_owned()))?;
+            Ok(())
+        });
 
-    let stdin_task = tokio::spawn(async move {
-        let mut stdin = tokio::io::stdin(); // read here
-        let mut buf = [0u8; 1024];
-        loop {
-            tokio::select! {
-                // after all tasks exit the read is still blocked under the hood so it needs some
-                // keypress to trigger the release
-                stdin_res = stdin.read(&mut buf) => {
-                    match stdin_res {
-                        Ok(n) if n > 0 => {
-                            trace!("Sending {n} bytes to daemon");
-                            for &b in &buf[..n] {
-                                send_to_tcp.send(b).inspect_err(|e| {
-                                    info!("send error: {e}");
-                                })?;
+    let stdin_task: tokio::task::JoinHandle<std::result::Result<_, Error>> =
+        tokio::spawn(async move {
+            let mut stdin = tokio::io::stdin(); // read here
+            let mut buf = [0u8; 1024];
+            loop {
+                tokio::select! {
+                    // after all tasks exit the read is still blocked under the hood so it needs some
+                    // keypress to trigger the release
+                    stdin_res = stdin.read(&mut buf) => {
+                        match stdin_res {
+                            Ok(n) if n > 0 => {
+                                trace!("Sending {n} bytes to daemon");
+                                for &b in &buf[..n] {
+                                    send_to_tcp.send(b).map_err(|_| {
+                                        Error::Custom("can't send to tcp channel".to_owned())
+                                    })?;
+                                }
+                            }
+                            Ok(_) => {
+                                debug!("stream closed");
+                                break; // stream is closed
+                            }
+                            Err(e) => {
+                                error!("Error reading from stdin: {e}");
+                                continue;
                             }
                         }
-                        Ok(_) => {
-                            debug!("stream closed");
-                            break; // stream is closed
-                        }
-                        Err(e) => {
-                            error!("Error reading from stdin: {e}");
-                            continue;
-                        }
+                    },
+                    Some(_) = recv_cancel_stdin_task.recv() => {
+                        break;
                     }
-                },
-                Some(_) = recv_cancel_stdin_task.recv() => {
-                    break;
                 }
             }
-        }
-        info!("closing stdin task");
-        Ok::<(), RemuxCLIError>(())
-    });
+            info!("closing stdin task");
+            Ok(())
+        });
 
     if let Err(e) = tokio::try_join!(tcp_task, stdin_task) {
         error!("error joining tokio tasks: {e}");
