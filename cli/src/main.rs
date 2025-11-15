@@ -5,13 +5,13 @@ use remux_core::{
     daemon_utils::get_sock_path,
     messages::{self, RemuxDaemonRequest},
 };
-
-use crate::error::{Error, Result};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::UnixStream,
 };
 use tracing::{debug, error, info, trace};
+
+use crate::error::{Error, Result};
 
 #[tokio::main]
 async fn main() {

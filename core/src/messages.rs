@@ -1,10 +1,9 @@
+use derive_more::Display;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWriteExt},
     net::UnixStream,
 };
-
-use derive_more::Display;
 
 pub use crate::error::{Error, Result};
 
@@ -44,10 +43,12 @@ where
 #[cfg(test)]
 mod test {
     #![allow(clippy::unwrap_used)]
+    use std::{fs::remove_file, path::PathBuf};
+
+    use tokio::net::UnixListener;
+
     use super::*;
     use crate::constants::TEMP_SOCK_DIR;
-    use std::{fs::remove_file, path::PathBuf};
-    use tokio::net::UnixListener;
 
     #[tokio::test]
     async fn test_tcp_message() -> Result<()> {
