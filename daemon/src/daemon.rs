@@ -1,3 +1,9 @@
+use std::{
+    ffi::CString,
+    fs::{File, remove_file},
+    os::fd::{AsFd, AsRawFd},
+};
+
 use nix::{
     libc::{F_GETFL, F_SETFL, O_NONBLOCK, fcntl},
     pty,
@@ -7,10 +13,9 @@ use pty::{
     ForkptyResult::{Child, Parent},
     forkpty,
 };
-use std::{
-    ffi::CString,
-    fs::{File, remove_file},
-    os::fd::{AsFd, AsRawFd},
+use remux_core::{
+    daemon_utils::{get_sock_path, lock_daemon_file},
+    messages::{self, RemuxDaemonRequest},
 };
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt, unix::AsyncFd},
@@ -19,10 +24,6 @@ use tokio::{
 use tracing::{error, info, instrument};
 
 use crate::error::{Error, Result};
-use remux_core::{
-    daemon_utils::{get_sock_path, lock_daemon_file},
-    messages::{self, RemuxDaemonRequest},
-};
 
 #[derive(Debug)]
 pub struct RemuxDaemon {

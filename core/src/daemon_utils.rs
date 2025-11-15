@@ -1,10 +1,15 @@
-use std::env::var;
-use std::fs::{File, create_dir_all};
-use std::path::PathBuf;
+use std::{
+    env::var,
+    fs::{File, create_dir_all},
+    path::PathBuf,
+};
 
-use crate::constants::{self, HOME_DIR, RUNTIME_DIR};
-use crate::error::{Error, Result};
 use fs2::FileExt;
+
+use crate::{
+    constants::{self, HOME_DIR, RUNTIME_DIR},
+    error::{Error, Result},
+};
 
 /// if we can't lock the daemon file then the daemon
 /// process must be running
@@ -47,8 +52,9 @@ pub fn get_sock_path() -> Result<PathBuf> {
 #[cfg(test)]
 mod test {
     #![allow(clippy::unwrap_used)]
-    use super::*;
     use std::sync::{LazyLock, Mutex};
+
+    use super::*;
 
     static TEST_MUTEX: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
