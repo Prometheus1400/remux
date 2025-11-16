@@ -18,7 +18,7 @@ use tokio::{
     io::unix::AsyncFd,
     sync::{mpsc, watch},
 };
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, trace};
 
 use crate::{
     error::{Error, Result},
@@ -29,19 +29,17 @@ pub struct PtyProcessBuilder {
     pty_tx: mpsc::UnboundedSender<Bytes>,
     pty_rx: mpsc::UnboundedReceiver<Bytes>,
     output_tx: mpsc::UnboundedSender<Bytes>,
-    closed_tx: watch::Sender<bool>,
     exit_callbacks: Vec<Box<dyn FnOnce() + Send + 'static>>,
 }
 
 #[allow(unused)]
 impl PtyProcessBuilder {
-    pub fn new(output_tx: mpsc::UnboundedSender<Bytes>, closed_tx: watch::Sender<bool>) -> Self {
+    pub fn new(output_tx: mpsc::UnboundedSender<Bytes>) -> Self {
         let (pty_tx, pty_rx) = mpsc::unbounded_channel::<Bytes>();
         Self {
             pty_tx,
             pty_rx,
             output_tx,
-            closed_tx,
             exit_callbacks: vec![],
         }
     }
@@ -109,8 +107,8 @@ impl PtyProcessBuilder {
                                         let mut guard = async_fd.writable().await?;
                                         let _res = guard.try_io(|fd| {
                                             match unistd::write(fd.get_ref(), &data) {
-                                                Ok(n) if n > 0 => debug!("wrote {n} bytes to pty"),
-                                                Ok(_) => debug!("wrote 0 bytes to pty"),
+                                                Ok(n) if n > 0 => trace!("wrote {n} bytes to pty"),
+                                                Ok(_) => trace!("wrote 0 bytes to pty"),
                                                 Err(e) => error!("error writing to pty: {}", e),
                                             };
                                             Ok(())
@@ -142,7 +140,6 @@ impl PtyProcessBuilder {
                         Err(Errno::ECHILD) => info!("No such child process: {}", child),
                         Err(err) => error!("waitpid failed: {}", err),
                     }
-                    self.closed_tx.send(true);
                     // TODO: need to send some sort of event that eventually triggers the
                     // corresponding pane to get killed too
                     // can probably use these callbacks
