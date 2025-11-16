@@ -5,12 +5,12 @@ edition.workspace = true
 authors = ["Kaleb Dickerson", "Ryan Weisman"]
 
 [dependencies]
-serde.workspace = true
-itertools.workspace = true
-tokio.workspace = true
-thiserror.workspace = true
-derive_more.workspace = true
-fs2 = "0.4.3"
-bincode = "2.0.1"
-serde_json = "1.0.145"
 bytes.workspace = true
+derive_more.workspace = true
+serde_json.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+
+bincode = "2.0.1"
+fs2 = "0.4.3"

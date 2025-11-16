@@ -53,9 +53,14 @@ impl Session {
         })
     }
 
-    pub fn attach_stream(&mut self, stream: Arc<RwLock<UnixStream>>) -> NoResTask {
+    pub async fn full_redraw(&mut self) {
+        self.pane.redraw().await;
+    }
+
+    pub async fn attach_stream(&mut self, stream: Arc<RwLock<UnixStream>>) -> NoResTask {
         // when this goes out of scope the subscriber should be dropped
         let mut rx = self.pane.subscribe();
+        self.full_redraw().await;
         let pane_tx = self.pane.get_sender().clone();
         let mut closed_rx = self.pane.get_closed_watcher().clone();
         let stream_task: NoResTask = tokio::spawn(async move {
@@ -80,11 +85,9 @@ impl Session {
                     Ok(bytes) = rx.recv() => {
                         stream.write().await.write(&bytes).await.map_err(|_| Error::Custom("error sending to stream".to_owned()))?;
                     },
-                    _ = closed_rx.changed() => {
-                        if *closed_rx.borrow() {
-                            debug!("watch: detected pane terminated!");
-                            break;
-                        }
+                    Ok(_) = closed_rx.changed() => {
+                        debug!("watch: detected pane terminated!");
+                        break;
                     }
                 }
             }

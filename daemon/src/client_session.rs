@@ -30,7 +30,7 @@ impl ClientSession {
     pub async fn attach_to_session(&mut self, session: Arc<Mutex<Session>>) {
         self.detach();
         let mut guard = session.lock().await;
-        let session_task = guard.attach_stream(self.stream.clone());
+        let session_task = guard.attach_stream(self.stream.clone()).await;
         self.session_task = Some(session_task);
     }
 

@@ -6,13 +6,14 @@ authors = ["Kaleb Dickerson", "Ryan Weisman"]
 
 [dependencies]
 remux-core = { path = "../core" }
-tokio.workspace = true
+
 serde.workspace = true
-itertools.workspace = true
-crossterm = "0.29.0"
 thiserror.workspace = true
-tracing.workspace = true
-tracing-subscriber.workspace = true
+tokio.workspace = true
 tracing-appender.workspace = true
-clap = { version = "4.5.51", features = ["derive"] }
+tracing-subscriber.workspace = true
+tracing.workspace = true
 bytes.workspace = true
+
+clap = { version = "4.5.51", features = ["derive"] }
+crossterm = "0.29.0"
