@@ -47,7 +47,7 @@ impl RemuxDaemon {
     }
 }
 
-#[instrument]
+#[instrument(skip(stream))]
 async fn attach_client(stream: UnixStream) -> Result<()> {
     let mut session_table = SessionTable::new();
     session_table.new_active_session(Session::new().unwrap());
@@ -57,7 +57,7 @@ async fn attach_client(stream: UnixStream) -> Result<()> {
     Ok(())
 }
 
-#[instrument]
+#[instrument(skip(stream))]
 async fn handle_communication(mut stream: UnixStream) -> Result<()> {
     loop {
         let message: RemuxDaemonRequest = messages::read_message(&mut stream).await?;

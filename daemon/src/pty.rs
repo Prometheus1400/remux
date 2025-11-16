@@ -1,7 +1,4 @@
-use std::{
-    ffi::CString,
-    os::fd::{AsFd, AsRawFd},
-};
+use std::{ffi::CString, os::fd::AsRawFd};
 
 use bytes::Bytes;
 use nix::{
@@ -19,7 +16,7 @@ use nix::{
 };
 use tokio::{
     io::unix::AsyncFd,
-    sync::mpsc::{self, UnboundedReceiver, UnboundedSender},
+    sync::{mpsc, watch},
     task::JoinHandle,
 };
 use tracing::{debug, error, info};
@@ -29,20 +26,22 @@ use crate::error::{Error, Result};
 type Task = JoinHandle<std::result::Result<(), Error>>;
 
 pub struct PtyProcessBuilder {
-    pty_tx: UnboundedSender<Bytes>,
-    pty_rx: UnboundedReceiver<Bytes>,
-    output_tx: UnboundedSender<Bytes>,
+    pty_tx: mpsc::UnboundedSender<Bytes>,
+    pty_rx: mpsc::UnboundedReceiver<Bytes>,
+    output_tx: mpsc::UnboundedSender<Bytes>,
+    closed_tx: watch::Sender<bool>,
     exit_callbacks: Vec<Box<dyn FnOnce() + Send + 'static>>,
 }
 
 #[allow(unused)]
 impl PtyProcessBuilder {
-    pub fn new(output_tx: UnboundedSender<Bytes>) -> Self {
+    pub fn new(output_tx: mpsc::UnboundedSender<Bytes>, closed_tx: watch::Sender<bool>) -> Self {
         let (pty_tx, pty_rx) = mpsc::unbounded_channel::<Bytes>();
         Self {
             pty_tx,
             pty_rx,
             output_tx,
+            closed_tx,
             exit_callbacks: vec![],
         }
     }
@@ -56,6 +55,7 @@ impl PtyProcessBuilder {
     }
 
     pub fn build(mut self) -> Result<PtyProcesss> {
+        debug!("forking and spawning child PTY process");
         let fork_result = unsafe { forkpty(None, None)? };
         match fork_result {
             // child just goes off on its own and runs the shell
@@ -65,15 +65,8 @@ impl PtyProcessBuilder {
                 execvp(&cmd, std::slice::from_ref(&cmd))?;
                 unreachable!();
             }
-            // one tokio task that just wraps the master FD
-            // one task that just wraps the stream
-            // they can communicate via channels !!
             Parent { child, master } => {
-                info!("parent PID: {}", master.as_fd().as_raw_fd());
-                info!("child PID: {}", child.as_raw());
-                // let (send_to_pty, mut recv_for_pty) = unbounded_channel::<u8>();
-                // let (send_to_history, mut recv_for_history) = unbounded_channel::<String>(); // sender should send lines
-
+                debug!("child PID: {}", child.as_raw());
                 let fd = master.as_raw_fd();
                 let flags = unsafe { fcntl(fd, F_GETFL) };
                 if flags < 0 {
@@ -149,6 +142,7 @@ impl PtyProcessBuilder {
                         Err(Errno::ECHILD) => info!("No such child process: {}", child),
                         Err(err) => error!("waitpid failed: {}", err),
                     }
+                    self.closed_tx.send(true);
                     // TODO: need to send some sort of event that eventually triggers the
                     // corresponding pane to get killed too
                     // can probably use these callbacks
@@ -169,7 +163,7 @@ impl PtyProcessBuilder {
 
 pub struct PtyProcesss {
     // channels for sending to pty process -> sends into child process
-    pty_tx: UnboundedSender<Bytes>,
+    pty_tx: mpsc::UnboundedSender<Bytes>,
     // tokyo tasks
     pty_task: Task,
 }
@@ -180,14 +174,7 @@ impl PtyProcesss {
         !self.pty_task.is_finished()
     }
 
-    pub fn send_bytes(&mut self, bytes: Bytes) -> Result<()> {
-        self.pty_tx
-            .send(bytes)
-            .map_err(|_| Error::Custom("error sending byte to pty process".to_owned()))?;
-        Ok(())
-    }
-
-    pub fn get_sender(&self) -> &UnboundedSender<Bytes> {
+    pub fn get_sender(&self) -> &mpsc::UnboundedSender<Bytes> {
         &self.pty_tx
     }
 

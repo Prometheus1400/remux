@@ -1,4 +1,5 @@
 use std::{
+    convert::Infallible,
     sync::{Arc, LazyLock},
     vec,
 };
@@ -10,7 +11,7 @@ use tokio::{
     sync::Mutex,
     task::JoinHandle,
 };
-use tracing::{info, instrument};
+use tracing::{debug, info, instrument};
 
 use crate::{
     error::{Error, Result},
@@ -106,6 +107,7 @@ impl Session<Active, Focused> {
         // when this goes out of scope the subscriber should be dropped
         let mut rx = self.pane.subscribe();
         let pane_tx = self.pane.get_sender().clone();
+        let mut closed_rx = self.pane.get_closed_watcher().clone();
         let client_task: Task = tokio::spawn(async move {
             let mut buf = [0u8; 1024];
             loop {
@@ -113,17 +115,23 @@ impl Session<Active, Focused> {
                     Ok(n) = stream.read(&mut buf) => {
                         if n > 0 {
                             if pane_tx.send(Bytes::copy_from_slice(&buf[..n])).is_err() {
-                                info!("pane has terminated!");
+                                debug!("pane_tx: detected pane has terminated!");
                                 // TODO: would need some logic to remove the pane from the session
                                 break;
                             }
                         } else {
-                            info!("Tcp client disconnected");
+                            debug!("Tcp client disconnected");
                             break;
                         }
                     },
                     Ok(bytes) = rx.recv() => {
                         stream.write(&bytes).await.map_err(|_| Error::Custom("error sending to stream".to_owned()))?;
+                    },
+                    _ = closed_rx.changed() => {
+                        if *closed_rx.borrow() {
+                            debug!("watch: detected pane terminated!");
+                            break;
+                        }
                     }
                 }
             }
