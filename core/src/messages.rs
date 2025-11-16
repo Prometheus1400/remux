@@ -89,33 +89,28 @@ where
     Ok(message.get_id())
 }
 
-pub async fn read_message<R, M>(reader: &mut R) -> Result<M>
+pub async fn read_message<M>(stream: &mut UnixStream) -> Result<M>
 where
-    R: AsyncRead + Unpin,
     M: Message + DeserializeOwned,
 {
     let mut num_bytes = [0u8; 4];
-    reader.read_exact(&mut num_bytes).await?;
+    stream.read_exact(&mut num_bytes).await?;
     let num_bytes = u32::from_be_bytes(num_bytes);
 
     let mut message_bytes = vec![0u8; num_bytes as usize];
-    reader.read_exact(&mut message_bytes).await?;
+    stream.read_exact(&mut message_bytes).await?;
 
     Ok(serde_json::from_slice(&message_bytes)?)
 }
 
-pub async fn read_req<R>(reader: &mut R) -> Result<RequestMessage>
-where
-    R: AsyncRead + Unpin,
+pub async fn read_req(stream: &mut UnixStream) -> Result<RequestMessage>
 {
-    read_message(reader).await
+    read_message(stream).await
 }
 
-pub async fn read_res<R>(reader: &mut R) -> Result<ResponseMessage>
-where
-    R: AsyncRead + Unpin,
+pub async fn read_res(stream: &mut UnixStream) -> Result<ResponseMessage>
 {
-    read_message(reader).await
+    read_message(stream).await
 }
 
 #[cfg(test)]
