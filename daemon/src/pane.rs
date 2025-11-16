@@ -28,7 +28,7 @@ impl PaneBuilder {
         let vte = Arc::new(Mutex::new(Parser::default()));
 
         let pty = PtyProcessBuilder::new(pty_output_tx)
-            .with_exit_callback(|| info!("PtyProcess has finished!"))
+            .with_exit_callback(|| info!("PtyProcess has terminated!"))
             .with_exit_callback(move || closed_tx.send(()).unwrap())
             .build()?;
 
@@ -154,8 +154,6 @@ impl Pane {
     pub fn get_closed_watcher(&self) -> &watch::Receiver<()> {
         &self.closed_rx
     }
-
-    pub fn terminate(self) {}
 }
 
 async fn get_keycodes(
