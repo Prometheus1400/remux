@@ -103,13 +103,11 @@ where
     Ok(serde_json::from_slice(&message_bytes)?)
 }
 
-pub async fn read_req(stream: &mut UnixStream) -> Result<RequestMessage>
-{
+pub async fn read_req(stream: &mut UnixStream) -> Result<RequestMessage> {
     read_message(stream).await
 }
 
-pub async fn read_res(stream: &mut UnixStream) -> Result<ResponseMessage>
-{
+pub async fn read_res(stream: &mut UnixStream) -> Result<ResponseMessage> {
     read_message(stream).await
 }
 
