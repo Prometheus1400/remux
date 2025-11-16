@@ -78,7 +78,7 @@ impl PaneBuilder {
         let prev_vte_state_clone = prev_vte_state.clone();
         let mut closed_rx_clone = closed_rx.clone();
         let vte_task = tokio::spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_millis(100));
+            let mut interval = tokio::time::interval(Duration::from_millis(1000));
             loop {
                 tokio::select! {
                     Ok(_) = closed_rx_clone.changed() => {
