@@ -7,10 +7,8 @@ use tracing::{debug, info};
 
 use crate::{
     error::{Error, Result},
-    pty::{PtyProcessBuilder, PtyProcesss},
+    pty::{PtyProcessBuilder, PtyProcesss}, types::NoResTask,
 };
-
-type Task = JoinHandle<std::result::Result<(), Error>>;
 
 pub struct PaneBuilder {
     output_tx: broadcast::Sender<Bytes>,
@@ -80,9 +78,9 @@ impl PaneState for Hidden {}
 
 pub struct Pane<State> {
     pty: PtyProcesss,
-    input_task: Task,
+    input_task: NoResTask,
     input_tx: mpsc::UnboundedSender<Bytes>, // this we use to let others send input to the pane
-    output_task: Task,
+    output_task: NoResTask,
     output_tx: broadcast::Sender<Bytes>, // keep this around to construct receivers for 'subscribe'
     closed_rx: watch::Receiver<bool>,
     _state: std::marker::PhantomData<State>,
@@ -107,9 +105,9 @@ impl Pane<Focused> {
     // we can only construct a pane in focused state
     fn new(
         pty: PtyProcesss,
-        input_task: Task,
+        input_task: NoResTask,
         input_tx: mpsc::UnboundedSender<Bytes>,
-        output_task: Task,
+        output_task: NoResTask,
         output_tx: broadcast::Sender<Bytes>,
         closed_rx: watch::Receiver<bool>,
     ) -> Self {

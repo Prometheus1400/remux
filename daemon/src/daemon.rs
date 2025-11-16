@@ -47,6 +47,7 @@ impl RemuxDaemon {
     }
 }
 
+// TODO: this is a hack just for testing
 #[instrument(skip(stream))]
 async fn attach_client(stream: UnixStream) -> Result<()> {
     let mut session_table = SessionTable::new();

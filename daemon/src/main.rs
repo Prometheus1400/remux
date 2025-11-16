@@ -1,4 +1,5 @@
 mod daemon;
+mod types;
 mod error;
 mod pane;
 mod pty;

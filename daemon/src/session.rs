@@ -1,5 +1,4 @@
 use std::{
-    convert::Infallible,
     sync::{Arc, LazyLock},
     vec,
 };
@@ -8,19 +7,19 @@ use bytes::Bytes;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::UnixStream,
-    sync::Mutex,
-    task::JoinHandle,
+    sync::{Mutex, RwLock},
 };
-use tracing::{debug, info, instrument};
+use tracing::debug;
 
 use crate::{
     error::{Error, Result},
     pane::{Focused, Hidden, Pane, PaneBuilder, PaneState},
+    types::NoResTask,
 };
-type Task = JoinHandle<std::result::Result<(), Error>>;
+
 pub type SharedSessionTable = LazyLock<Arc<Mutex<SessionTable>>>;
-pub static SHARED_SESSION_TABLE: LazyLock<Arc<SessionTable>> =
-    LazyLock::new(|| Arc::new(SessionTable::new()));
+pub static SHARED_SESSION_TABLE: LazyLock<Arc<RwLock<SessionTable>>> =
+    LazyLock::new(|| Arc::new(RwLock::new(SessionTable::new())));
 
 pub struct SessionTable {
     active_session: Option<Session<Active, Focused>>,
@@ -66,7 +65,7 @@ impl SessionState for Inactive {}
 
 struct ClientAttachment {
     pub stream: UnixStream,
-    pub task: Task,
+    pub task: NoResTask,
 }
 
 // Session sould own the client connection when it is active
@@ -77,7 +76,7 @@ where
 {
     pane: Pane<P>,
     stream: Option<UnixStream>,
-    client_task: Option<Task>,
+    client_task: Option<NoResTask>,
     _state: std::marker::PhantomData<State>,
 }
 impl Session<Active, Focused> {
@@ -108,7 +107,7 @@ impl Session<Active, Focused> {
         let mut rx = self.pane.subscribe();
         let pane_tx = self.pane.get_sender().clone();
         let mut closed_rx = self.pane.get_closed_watcher().clone();
-        let client_task: Task = tokio::spawn(async move {
+        let client_task: NoResTask = tokio::spawn(async move {
             let mut buf = [0u8; 1024];
             loop {
                 tokio::select! {

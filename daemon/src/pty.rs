@@ -21,9 +21,7 @@ use tokio::{
 };
 use tracing::{debug, error, info};
 
-use crate::error::{Error, Result};
-
-type Task = JoinHandle<std::result::Result<(), Error>>;
+use crate::{error::{Error, Result}, types::NoResTask};
 
 pub struct PtyProcessBuilder {
     pty_tx: mpsc::UnboundedSender<Bytes>,
@@ -77,7 +75,7 @@ impl PtyProcessBuilder {
                     return Err(Error::Custom("fcntl error".into()));
                 }
 
-                let pty_task: Task = tokio::spawn(async move {
+                let pty_task: NoResTask = tokio::spawn(async move {
                     let async_fd = AsyncFd::new(master)?;
                     loop {
                         tokio::select! {
@@ -165,7 +163,7 @@ pub struct PtyProcesss {
     // channels for sending to pty process -> sends into child process
     pty_tx: mpsc::UnboundedSender<Bytes>,
     // tokyo tasks
-    pty_task: Task,
+    pty_task: NoResTask,
 }
 
 #[allow(unused)]
