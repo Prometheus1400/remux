@@ -9,11 +9,8 @@ pub use crate::error::{Error, Result};
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Display)]
 pub enum RemuxDaemonRequest {
-    #[display("Connect: {{session_id: {session_id}, create: {create}}}")]
-    Connect {
-        session_id: u16,
-        create: bool,
-    },
+    #[display("Connect: {{session_id: {session_id}}}")]
+    Connect { session_id: u16, },
     Disconnect,
 
     // pane commands

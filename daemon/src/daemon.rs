@@ -4,12 +4,11 @@ use remux_core::{
     daemon_utils::{get_sock_path, lock_daemon_file},
     messages::{self, RemuxDaemonRequest},
 };
-use tokio::net::{UnixListener, UnixStream};
+use tokio::{net::{UnixListener, UnixStream}, sync::Mutex};
 use tracing::{error, info, instrument};
 
 use crate::{
-    error::Result,
-    session::{Session, SessionTable},
+    client_session::{self, ClientSession}, error::Result, session::{SHARED_SESSION_TABLE, Session, SessionTable}
 };
 
 pub struct RemuxDaemon {
@@ -48,13 +47,11 @@ impl RemuxDaemon {
 }
 
 // TODO: this is a hack just for testing
-#[instrument(skip(stream))]
-async fn attach_client(stream: UnixStream) -> Result<()> {
-    let mut session_table = SessionTable::new();
-    session_table.new_active_session(Session::new().unwrap());
-    if let Some(session) = session_table.get_active_session() {
-        session.attach_client(stream).await?;
-    }
+// #[instrument]
+async fn attach_client(mut client_session: ClientSession, session_id: u16 ) -> Result<()> {
+    let session = SHARED_SESSION_TABLE.lock().await.get_or_create_session(session_id)?;
+    client_session.attach_to_session(session).await;
+    client_session.block().await;
     Ok(())
 }
 
@@ -63,10 +60,10 @@ async fn handle_communication(mut stream: UnixStream) -> Result<()> {
     loop {
         let message: RemuxDaemonRequest = messages::read_message(&mut stream).await?;
         match message {
-            RemuxDaemonRequest::Connect { session_id, create } => {
-                // TODO: reattach with active pane
+            RemuxDaemonRequest::Connect { session_id } => {
+                let client_session = ClientSession::new(stream);
                 info!("attaching client");
-                attach_client(stream).await?;
+                attach_client(client_session, session_id).await?;
                 return Ok(());
             }
             RemuxDaemonRequest::Disconnect => todo!(),

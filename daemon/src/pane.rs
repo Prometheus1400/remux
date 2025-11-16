@@ -1,13 +1,11 @@
 use bytes::Bytes;
-use tokio::{
-    sync::{broadcast, mpsc, watch},
-    task::JoinHandle,
-};
+use tokio::sync::{broadcast, mpsc, watch};
 use tracing::{debug, info};
 
 use crate::{
-    error::{Error, Result},
-    pty::{PtyProcessBuilder, PtyProcesss}, types::NoResTask,
+    error::Result,
+    pty::{PtyProcessBuilder, PtyProcesss},
+    types::NoResTask,
 };
 
 pub struct PaneBuilder {
@@ -22,7 +20,7 @@ impl PaneBuilder {
         Self { output_tx }
     }
 
-    pub fn build(self) -> Result<Pane<Focused>> {
+    pub fn build(self) -> Result<Pane> {
         let (pty_output_tx, mut pty_output_rx) = mpsc::unbounded_channel::<Bytes>();
         let (pty_input_tx, mut pty_input_rx) = mpsc::unbounded_channel::<Bytes>();
         let (closed_tx, closed_rx) = watch::channel(false);
@@ -64,45 +62,29 @@ impl PaneBuilder {
     }
 }
 
-pub trait PaneState {}
-// pub trait IsFocused : PaneState {}
-// pub trait IsHidden : PaneState {}
+// pub trait PaneState {}
+// // pub trait IsFocused : PaneState {}
+// // pub trait IsHidden : PaneState {}
+//
+// pub struct Focused {}
+// impl PaneState for Focused {}
+// // impl IsFocused for Focused {}
+//
+// pub struct Hidden {}
+// impl PaneState for Hidden {}
+// // impl IsHidden for Hidden {}
 
-pub struct Focused {}
-impl PaneState for Focused {}
-// impl IsFocused for Focused {}
-
-pub struct Hidden {}
-impl PaneState for Hidden {}
-// impl IsHidden for Hidden {}
-
-pub struct Pane<State> {
+pub struct Pane {
     pty: PtyProcesss,
     input_task: NoResTask,
     input_tx: mpsc::UnboundedSender<Bytes>, // this we use to let others send input to the pane
     output_task: NoResTask,
     output_tx: broadcast::Sender<Bytes>, // keep this around to construct receivers for 'subscribe'
     closed_rx: watch::Receiver<bool>,
-    _state: std::marker::PhantomData<State>,
 }
 
 // subscribers can subscribe in any state
-impl<State> Pane<State> {
-    pub fn subscribe(&self) -> broadcast::Receiver<Bytes> {
-        self.output_tx.subscribe()
-    }
-
-    pub fn get_sender(&self) -> &mpsc::UnboundedSender<Bytes> {
-        &self.input_tx
-    }
-
-    pub fn get_closed_watcher(&self) -> &watch::Receiver<bool> {
-        &self.closed_rx
-    }
-}
-
-impl Pane<Focused> {
-    // we can only construct a pane in focused state
+impl Pane {
     fn new(
         pty: PtyProcesss,
         input_task: NoResTask,
@@ -118,33 +100,17 @@ impl Pane<Focused> {
             output_task,
             output_tx,
             closed_rx,
-            _state: std::marker::PhantomData,
         }
     }
-
-    pub fn hide(self) -> Pane<Hidden> {
-        Pane::<Hidden> {
-            pty: self.pty,
-            input_task: self.input_task,
-            input_tx: self.input_tx,
-            output_task: self.output_task,
-            output_tx: self.output_tx,
-            closed_rx: self.closed_rx,
-            _state: std::marker::PhantomData,
-        }
+    pub fn subscribe(&self) -> broadcast::Receiver<Bytes> {
+        self.output_tx.subscribe()
     }
-}
 
-impl Pane<Hidden> {
-    pub fn focus(self) -> Pane<Focused> {
-        Pane::<Focused> {
-            pty: self.pty,
-            input_task: self.input_task,
-            input_tx: self.input_tx,
-            output_task: self.output_task,
-            output_tx: self.output_tx,
-            closed_rx: self.closed_rx,
-            _state: std::marker::PhantomData,
-        }
+    pub fn get_sender(&self) -> &mpsc::UnboundedSender<Bytes> {
+        &self.input_tx
+    }
+
+    pub fn get_closed_watcher(&self) -> &watch::Receiver<bool> {
+        &self.closed_rx
     }
 }

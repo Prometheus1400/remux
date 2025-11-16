@@ -1,9 +1,10 @@
+mod client_session;
 mod daemon;
-mod types;
 mod error;
 mod pane;
 mod pty;
 mod session;
+mod types;
 
 use daemon::RemuxDaemon;
 use tracing::{error, info};

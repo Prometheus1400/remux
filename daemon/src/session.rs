@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     sync::{Arc, LazyLock},
     vec,
 };
@@ -13,105 +14,78 @@ use tracing::debug;
 
 use crate::{
     error::{Error, Result},
-    pane::{Focused, Hidden, Pane, PaneBuilder, PaneState},
+    pane::{Pane, PaneBuilder},
     types::NoResTask,
 };
 
 pub type SharedSessionTable = LazyLock<Arc<Mutex<SessionTable>>>;
-pub static SHARED_SESSION_TABLE: LazyLock<Arc<RwLock<SessionTable>>> =
-    LazyLock::new(|| Arc::new(RwLock::new(SessionTable::new())));
+pub static SHARED_SESSION_TABLE: SharedSessionTable =
+    LazyLock::new(|| Arc::new(Mutex::new(SessionTable::new())));
 
 pub struct SessionTable {
-    active_session: Option<Session<Active, Focused>>,
-    inactive_sessions: Vec<Session<Inactive, Hidden>>,
+    sessions: HashMap<u16, Arc<Mutex<Session>>>,
 }
 impl SessionTable {
     pub fn new() -> Self {
         Self {
-            active_session: None,
-            inactive_sessions: vec![],
+            sessions: HashMap::new(),
         }
     }
 
-    pub fn get_active_session(&mut self) -> Option<&mut Session<Active, Focused>> {
-        self.active_session.as_mut()
-    }
-
-    pub fn new_active_session(&mut self, session: Session<Active, Focused>) {
-        if let Some(prev_session) = self.active_session.take() {
-            let deactivated_session = prev_session.hide();
-            self.inactive_sessions.push(deactivated_session);
+    pub fn get_or_create_session(&mut self, session_id: u16) -> Result<Arc<Mutex<Session>>> {
+        if let None = self.sessions.get(&session_id) {
+            self.sessions.insert(session_id, Arc::new(Mutex::new(Session::new()?)));
         }
 
-        self.active_session = Some(session);
+        Ok(self.sessions.get(&session_id).unwrap().clone())
     }
 
-    pub fn attach_client(&mut self, stream: UnixStream) -> Result<()> {
-        self.active_session
-            .as_mut()
-            .ok_or(Error::Custom(
-                "trying to attach client when no active session".to_owned(),
-            ))?
-            .attach_client(stream);
-        Ok(())
-    }
-}
-
-pub trait SessionState {}
-pub struct Active {}
-impl SessionState for Active {}
-pub struct Inactive {}
-impl SessionState for Inactive {}
-
-struct ClientAttachment {
-    pub stream: UnixStream,
-    pub task: NoResTask,
+    // pub fn get_active_session(&mut self) -> Option<&mut Session> {
+    //     self.active_session.as_mut()
+    // }
+    //
+    // pub fn new_active_session(&mut self, session: Session) {
+    //     if let Some(prev_session) = self.active_session.take() {
+    //         self.inactive_sessions.push(prev_session);
+    //     }
+    //     self.active_session = Some(session);
+    // }
+    //
+    // pub fn attach_client(&mut self, stream: UnixStream) -> Result<()> {
+    //     self.active_session
+    //         .as_mut()
+    //         .ok_or(Error::Custom(
+    //             "trying to attach client when no active session".to_owned(),
+    //         ))?
+    //         .attach_stream(stream);
+    //     Ok(())
+    // }
 }
 
 // Session sould own the client connection when it is active
-pub struct Session<State, P>
-where
-    State: SessionState,
-    P: PaneState,
-{
-    pane: Pane<P>,
-    stream: Option<UnixStream>,
-    client_task: Option<NoResTask>,
-    _state: std::marker::PhantomData<State>,
+pub struct Session {
+    pane: Pane,
 }
-impl Session<Active, Focused> {
+impl Session {
     pub fn new() -> Result<Self> {
         Ok(Self {
             pane: PaneBuilder::new().build()?,
-            // stream: Some(stream),
-            stream: None,
-            client_task: None,
-            _state: std::marker::PhantomData,
         })
     }
 
-    pub fn hide(self) -> Session<Inactive, Hidden> {
-        if let Some(task) = self.client_task {
-            task.abort();
-        }
-        Session::<Inactive, Hidden> {
-            pane: self.pane.hide(),
-            stream: None,
-            client_task: None,
-            _state: std::marker::PhantomData,
-        }
-    }
-
-    pub async fn attach_client(&mut self, mut stream: UnixStream) -> Result<()> {
+    pub fn attach_stream(&mut self, stream: Arc<RwLock<UnixStream>>) -> NoResTask {
         // when this goes out of scope the subscriber should be dropped
         let mut rx = self.pane.subscribe();
         let pane_tx = self.pane.get_sender().clone();
         let mut closed_rx = self.pane.get_closed_watcher().clone();
-        let client_task: NoResTask = tokio::spawn(async move {
+        let stream_task: NoResTask = tokio::spawn(async move {
             let mut buf = [0u8; 1024];
             loop {
                 tokio::select! {
-                    Ok(n) = stream.read(&mut buf) => {
+                    Ok(n) = async {
+                        let mut guard = stream.write().await;
+                        guard.read(&mut buf).await
+                    } => {
                         if n > 0 {
                             if pane_tx.send(Bytes::copy_from_slice(&buf[..n])).is_err() {
                                 debug!("pane_tx: detected pane has terminated!");
@@ -124,7 +98,7 @@ impl Session<Active, Focused> {
                         }
                     },
                     Ok(bytes) = rx.recv() => {
-                        stream.write(&bytes).await.map_err(|_| Error::Custom("error sending to stream".to_owned()))?;
+                        stream.write().await.write(&bytes).await.map_err(|_| Error::Custom("error sending to stream".to_owned()))?;
                     },
                     _ = closed_rx.changed() => {
                         if *closed_rx.borrow() {
@@ -136,17 +110,6 @@ impl Session<Active, Focused> {
             }
             Ok(())
         });
-        let _ = tokio::try_join!(client_task)?;
-        Ok(())
-    }
-}
-impl Session<Inactive, Hidden> {
-    pub fn focus(self) -> Session<Active, Focused> {
-        Session::<Active, Focused> {
-            pane: self.pane.focus(),
-            stream: None,
-            client_task: None,
-            _state: std::marker::PhantomData,
-        }
+        stream_task
     }
 }

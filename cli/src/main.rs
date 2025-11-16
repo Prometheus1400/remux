@@ -56,10 +56,7 @@ async fn run() -> Result<()> {
             source,
         })?;
     debug!("Sending connect request");
-    let message = RemuxDaemonRequest::Connect {
-        session_id: 1,
-        create: true,
-    };
+    let message = RemuxDaemonRequest::Connect { session_id: 1 };
     messages::write_message(&mut stream, &message)
         .await
         .map_err(|source| Error::SendMessage { message, source })?;
