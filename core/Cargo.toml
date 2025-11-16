@@ -13,3 +13,4 @@ derive_more.workspace = true
 fs2 = "0.4.3"
 bincode = "2.0.1"
 serde_json = "1.0.145"
+bytes.workspace = true

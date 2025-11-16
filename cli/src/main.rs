@@ -1,9 +1,11 @@
+mod args;
 mod error;
 
+use clap::Parser;
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use remux_core::{
     daemon_utils::get_sock_path,
-    messages::{self, RemuxDaemonRequest},
+    messages::{self, RequestMessage, ResponseBody, ResponseMessage},
 };
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -11,13 +13,18 @@ use tokio::{
 };
 use tracing::{debug, error, info, trace};
 
-use crate::error::{Error, Result};
+use crate::{
+    args::{Args, Commands, SessionCommands},
+    error::{Error, Result},
+};
 
 #[tokio::main]
 async fn main() {
+    let cli = Args::parse();
+
     match setup_logging() {
         Ok(_guard) => {
-            if let Err(e) = run().await {
+            if let Err(e) = run(cli.command).await {
                 eprintln!("{e}");
                 std::process::exit(1);
             }
@@ -46,21 +53,45 @@ fn setup_logging() -> Result<tracing_appender::non_blocking::WorkerGuard> {
     Ok(guard)
 }
 
-async fn run() -> Result<()> {
+async fn connect() -> Result<UnixStream> {
     let socket_path = get_sock_path()?;
     debug!("Connecting to {:?}", socket_path);
-    let mut stream = UnixStream::connect(socket_path.clone())
+    UnixStream::connect(socket_path.clone())
         .await
         .map_err(|source| Error::ConnectingSocket {
             socket_path: socket_path.to_string_lossy().into_owned(),
             source,
-        })?;
-    debug!("Sending connect request");
-    let message = RemuxDaemonRequest::Connect;
-    messages::write_message(&mut stream, &message)
+        })
+}
+
+async fn handle_session_command(mut stream: UnixStream, command: SessionCommands) -> Result<()> {
+    let req: RequestMessage = command.into();
+    let res: ResponseMessage = messages::send_and_recv(&mut stream, &req).await?;
+    match res.body {
+        ResponseBody::SessionsList { sessions } => {
+            println!("{sessions:?}");
+        }
+    }
+    Ok(())
+}
+
+async fn run(command: Commands) -> Result<()> {
+    let stream = connect().await?;
+    match command {
+        a @ Commands::Attach { .. } => attach(stream, a.into()).await,
+        Commands::Session { action } => handle_session_command(stream, action).await,
+    }
+}
+
+async fn attach(mut stream: UnixStream, attach_message: RequestMessage) -> Result<()> {
+    debug!("Sending attach request");
+    messages::write_message(&mut stream, &attach_message)
         .await
-        .map_err(|source| Error::SendMessage { message, source })?;
-    debug!("Sent connect request successfully");
+        .map_err(|source| Error::SendRequestMessage {
+            message: attach_message,
+            source,
+        })?;
+    debug!("Sent attach request successfully");
 
     let (send_to_tcp, mut recv_for_tcp) = tokio::sync::mpsc::unbounded_channel::<u8>();
     let (send_cancel_stdin_task, mut recv_cancel_stdin_task) =
