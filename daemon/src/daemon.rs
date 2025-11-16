@@ -2,14 +2,12 @@ use std::fs::{File, remove_file};
 
 use remux_core::{
     daemon_utils::{get_sock_path, lock_daemon_file},
-    messages::{self, RemuxDaemonRequest},
+    messages::{self, Message, RequestBody, ResponseBody, ResponseMessage},
 };
-use tokio::{net::{UnixListener, UnixStream}, sync::Mutex};
+use tokio::net::{UnixListener, UnixStream};
 use tracing::{error, info, instrument};
 
-use crate::{
-    client_session::{self, ClientSession}, error::Result, session::{SHARED_SESSION_TABLE, Session, SessionTable}
-};
+use crate::{client_session::ClientSession, error::Result, session::SHARED_SESSION_TABLE};
 
 pub struct RemuxDaemon {
     _daemon_file: File, // daemon must hold the exclusive file lock while it is alive and running
@@ -48,8 +46,11 @@ impl RemuxDaemon {
 
 // TODO: this is a hack just for testing
 // #[instrument]
-async fn attach_client(mut client_session: ClientSession, session_id: u16 ) -> Result<()> {
-    let session = SHARED_SESSION_TABLE.lock().await.get_or_create_session(session_id)?;
+async fn attach_client(mut client_session: ClientSession, session_id: u16) -> Result<()> {
+    let session = SHARED_SESSION_TABLE
+        .lock()
+        .await
+        .get_or_create_session(session_id)?;
     client_session.attach_to_session(session).await;
     client_session.block().await;
     Ok(())
@@ -57,21 +58,24 @@ async fn attach_client(mut client_session: ClientSession, session_id: u16 ) -> R
 
 #[instrument(skip(stream))]
 async fn handle_communication(mut stream: UnixStream) -> Result<()> {
-    loop {
-        let message: RemuxDaemonRequest = messages::read_message(&mut stream).await?;
-        match message {
-            RemuxDaemonRequest::Connect { session_id } => {
-                let client_session = ClientSession::new(stream);
-                info!("attaching client");
-                attach_client(client_session, session_id).await?;
-                return Ok(());
-            }
-            RemuxDaemonRequest::Disconnect => todo!(),
-            RemuxDaemonRequest::NewPane => todo!(),
-            RemuxDaemonRequest::CyclePane => todo!(),
-            RemuxDaemonRequest::KillPane => todo!(),
+    let req = messages::read_req(&mut stream).await?;
+    match req.body {
+        RequestBody::Attach { session_id } => {
+            let client_session = ClientSession::new(stream);
+            info!("attaching client");
+            attach_client(client_session, session_id).await?;
         }
-    }
+        RequestBody::SessionsList => {
+            info!("handling sesions list");
+            let sessions = SHARED_SESSION_TABLE.lock().await.get_sessions();
+            messages::write_message(
+                &mut stream,
+                &ResponseMessage::new(req.get_id(), ResponseBody::SessionsList { sessions }),
+            )
+            .await?;
+        }
+    };
+    Ok(())
 }
 
 #[cfg(test)]

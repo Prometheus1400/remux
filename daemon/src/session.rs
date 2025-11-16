@@ -1,7 +1,6 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, hash_map::Entry},
     sync::{Arc, LazyLock},
-    vec,
 };
 
 use bytes::Bytes;
@@ -33,36 +32,17 @@ impl SessionTable {
     }
 
     pub fn get_or_create_session(&mut self, session_id: u16) -> Result<Arc<Mutex<Session>>> {
-        if let None = self.sessions.get(&session_id) {
-            self.sessions.insert(session_id, Arc::new(Mutex::new(Session::new()?)));
+        if let Entry::Vacant(e) = self.sessions.entry(session_id) {
+            e.insert(Arc::new(Mutex::new(Session::new()?)));
         }
-
         Ok(self.sessions.get(&session_id).unwrap().clone())
     }
 
-    // pub fn get_active_session(&mut self) -> Option<&mut Session> {
-    //     self.active_session.as_mut()
-    // }
-    //
-    // pub fn new_active_session(&mut self, session: Session) {
-    //     if let Some(prev_session) = self.active_session.take() {
-    //         self.inactive_sessions.push(prev_session);
-    //     }
-    //     self.active_session = Some(session);
-    // }
-    //
-    // pub fn attach_client(&mut self, stream: UnixStream) -> Result<()> {
-    //     self.active_session
-    //         .as_mut()
-    //         .ok_or(Error::Custom(
-    //             "trying to attach client when no active session".to_owned(),
-    //         ))?
-    //         .attach_stream(stream);
-    //     Ok(())
-    // }
+    pub fn get_sessions(&self) -> Vec<u16> {
+        self.sessions.keys().copied().collect()
+    }
 }
 
-// Session sould own the client connection when it is active
 pub struct Session {
     pane: Pane,
 }

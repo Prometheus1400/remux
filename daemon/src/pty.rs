@@ -17,11 +17,13 @@ use nix::{
 use tokio::{
     io::unix::AsyncFd,
     sync::{mpsc, watch},
-    task::JoinHandle,
 };
 use tracing::{debug, error, info};
 
-use crate::{error::{Error, Result}, types::NoResTask};
+use crate::{
+    error::{Error, Result},
+    types::NoResTask,
+};
 
 pub struct PtyProcessBuilder {
     pty_tx: mpsc::UnboundedSender<Bytes>,

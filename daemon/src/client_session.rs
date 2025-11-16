@@ -1,6 +1,9 @@
 use std::sync::Arc;
 
-use tokio::{net::UnixStream, sync::{Mutex, RwLock}};
+use tokio::{
+    net::UnixStream,
+    sync::{Mutex, RwLock},
+};
 
 use crate::{session::Session, types::NoResTask};
 
@@ -20,7 +23,7 @@ impl ClientSession {
 
     pub async fn block(&mut self) {
         if let Some(task) = self.session_task.take() {
-            tokio::join!(task);
+            let _ = tokio::join!(task);
         }
     }
 
@@ -33,7 +36,7 @@ impl ClientSession {
 
     pub fn detach(&mut self) {
         if let Some(task) = &self.session_task {
-            task.abort(); 
+            task.abort();
         }
         self.session_task = None;
         self.attached_session = None;
