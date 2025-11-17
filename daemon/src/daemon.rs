@@ -60,7 +60,7 @@ async fn attach_client(mut client_session: ClientSession, session_id: u16) -> Re
 async fn handle_communication(mut stream: UnixStream) -> Result<()> {
     let req = messages::read_req(&mut stream).await?;
     match req.body {
-        RequestBody::Attach { session_id } => {
+        RequestBody::Attach { session_id, .. } => {
             let client_session = ClientSession::new(stream);
             info!("attaching client");
             attach_client(client_session, session_id).await?;

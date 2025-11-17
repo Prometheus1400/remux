@@ -1,7 +1,7 @@
 use derive_more::Display;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use tokio::{
-    io::{AsyncRead, AsyncReadExt, AsyncWriteExt},
+    io::{AsyncReadExt, AsyncWriteExt},
     net::UnixStream,
 };
 
@@ -52,9 +52,13 @@ impl Message for ResponseMessage {
 #[derive(Serialize, Deserialize, Debug, PartialEq, Display)]
 #[serde(tag = "type")]
 pub enum RequestBody {
-    #[display("Attach: {{session_id: {session_id}}}")]
+    #[display(
+        "Attach: {{session_id: {session_id}, term_rows: {term_rows}, term_cols: {term_cols}}}"
+    )]
     Attach {
         session_id: u16,
+        term_rows: u16,
+        term_cols: u16,
     },
     // session commands
     SessionsList,
@@ -140,7 +144,11 @@ mod test {
                 msg1,
                 RequestMessage {
                     id: msg1.get_id(),
-                    body: RequestBody::Attach { session_id: 1 }
+                    body: RequestBody::Attach {
+                        session_id: 1,
+                        term_rows: 1,
+                        term_cols: 1
+                    }
                 }
             );
 
@@ -153,7 +161,11 @@ mod test {
             .unwrap();
         write_message(
             &mut client,
-            &RequestMessage::body(RequestBody::Attach { session_id: 1 }),
+            &RequestMessage::body(RequestBody::Attach {
+                session_id: 1,
+                term_rows: 1,
+                term_cols: 1,
+            }),
         )
         .await
         .unwrap();

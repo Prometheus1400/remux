@@ -7,13 +7,17 @@ authors = ["Kaleb Dickerson", "Ryan Weisman"]
 [dependencies]
 remux-core = { path = "../core" }
 
+bytes.workspace = true
+futures.workspace = true 
 serde.workspace = true
+signal-hook-mio.workspace = true
+signal-hook-tokio.workspace = true
+signal-hook.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing-appender.workspace = true
 tracing-subscriber.workspace = true
 tracing.workspace = true
-bytes.workspace = true
 
 clap = { version = "4.5.51", features = ["derive"] }
 crossterm = "0.29.0"

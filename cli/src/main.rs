@@ -1,15 +1,18 @@
 mod args;
 mod error;
+mod term;
 
+use std::sync::Arc;
+
+use bytes::Bytes;
 use clap::Parser;
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use remux_core::{
     daemon_utils::get_sock_path,
-    messages::{self, RequestMessage, ResponseBody, ResponseMessage},
+    messages::{self, RequestMessage, ResponseBody, ResponseMessage}, notifications::ClientNotification,
 };
 use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    net::UnixStream,
+    io::{AsyncReadExt, AsyncWriteExt}, net::UnixStream, signal::{self, unix::{signal, SignalKind}}, sync::{Mutex, watch}
 };
 use tracing::{debug, error, info, trace};
 
@@ -93,9 +96,8 @@ async fn attach(mut stream: UnixStream, attach_message: RequestMessage) -> Resul
         })?;
     debug!("Sent attach request successfully");
 
-    let (send_to_tcp, mut recv_for_tcp) = tokio::sync::mpsc::unbounded_channel::<u8>();
-    let (send_cancel_stdin_task, mut recv_cancel_stdin_task) =
-        tokio::sync::mpsc::unbounded_channel::<u8>();
+    let (send_to_tcp, mut recv_for_tcp) = tokio::sync::mpsc::unbounded_channel::<ClientNotification>();
+    let (tcp_closed_tx, mut txp_closed_rx) = watch::channel(());
 
     enable_raw_mode()?;
     let tcp_task: tokio::task::JoinHandle<std::result::Result<_, Error>> =
@@ -114,11 +116,11 @@ async fn attach(mut stream: UnixStream, attach_message: RequestMessage) -> Resul
                             break;
                         }
                     },
-                    b_opt = recv_for_tcp.recv() => {
-                        match b_opt{
-                            Some(b) => {
-                                trace!("Sending byte '{}' to tcp stream", b);
-                                stream.write_u8(b).await?;
+                    notification_opt = recv_for_tcp.recv() => {
+                        match notification_opt {
+                            Some(notification) => {
+                                trace!("Sending bytes '{bytes:?}' to tcp stream");
+                                stream.write_all(&bytes).await?;
                             },
                             None => {
                                 debug!("channel closed");
@@ -129,29 +131,51 @@ async fn attach(mut stream: UnixStream, attach_message: RequestMessage) -> Resul
                 }
             }
             info!("closing tcp task");
-            send_cancel_stdin_task
-                .send(1)
+            tcp_closed_tx
+                .send(())
                 .map_err(|_| Error::Custom("can't send to cancel stdin channel".to_owned()))?;
             Ok(())
         });
 
+    let mut tcp_closed = txp_closed_rx.clone();
+    let send_to_tcp_clone = send_to_tcp.clone();
+    let signal_task : tokio::task::JoinHandle<std::result::Result<_, Error>> = tokio::spawn(async move {
+        let mut sig = signal(SignalKind::window_change())?;
+        loop {
+            tokio::select! {
+                Ok(_) = tcp_closed.changed() => {
+                    break;
+                },
+                Some(_) = sig.recv() => {
+                    // TODO: send resize notification to tcp with 'send_to_tcp_clone'
+                    debug!("terminal resized");
+                }
+            }
+        }
+        debug!("closing signal_task");
+        Ok(())
+    });
+
+    let mut tcp_closed = txp_closed_rx.clone();
     let stdin_task: tokio::task::JoinHandle<std::result::Result<_, Error>> =
         tokio::spawn(async move {
             let mut stdin = tokio::io::stdin(); // read here
             let mut buf = [0u8; 1024];
             loop {
                 tokio::select! {
+                    Ok(_) = tcp_closed.changed() => {
+                        break;
+                    }
                     // after all tasks exit the read is still blocked under the hood so it needs some
                     // keypress to trigger the release
                     stdin_res = stdin.read(&mut buf) => {
                         match stdin_res {
                             Ok(n) if n > 0 => {
-                                trace!("Sending {n} bytes to daemon");
-                                for &b in &buf[..n] {
-                                    send_to_tcp.send(b).map_err(|_| {
-                                        Error::Custom("can't send to tcp channel".to_owned())
-                                    })?;
-                                }
+                                let notification = ClientNotification::Input { bytes: Vec::from(&buf[..n]) };
+                                trace!("Sending notification {notification} to daemon");
+                                send_to_tcp.send(notification).map_err(|_| {
+                                    Error::Custom("can't send to tcp channel".to_owned())
+                                })?;
                             }
                             Ok(_) => {
                                 debug!("stream closed");
@@ -163,12 +187,9 @@ async fn attach(mut stream: UnixStream, attach_message: RequestMessage) -> Resul
                             }
                         }
                     },
-                    Some(_) = recv_cancel_stdin_task.recv() => {
-                        break;
-                    }
                 }
             }
-            info!("closing stdin task");
+            debug!("closing stdin_task");
             Ok(())
         });
 

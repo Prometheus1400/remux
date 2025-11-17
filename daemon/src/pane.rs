@@ -1,14 +1,14 @@
 use std::{sync::Arc, time::Duration};
 
 use bytes::Bytes;
+use remux_core::types::BackgroundTask;
 use tokio::sync::{Mutex, broadcast, mpsc, watch};
 use tracing::{debug, info, trace};
 use vt100::{Parser, Screen};
 
 use crate::{
-    error::Result,
+    error::{Error, Result},
     pty::{PtyProcessBuilder, PtyProcesss},
-    types::NoResTask,
 };
 
 pub struct PaneBuilder {}
@@ -118,17 +118,17 @@ impl PaneBuilder {
 pub struct Pane {
     pty: PtyProcesss,
     // task in charge of sending messages received on 'input_tx' to the PTY process
-    input_task: NoResTask,
+    input_task: BackgroundTask<Error>,
     // can be borrowed to send input to the pane
     input_tx: mpsc::UnboundedSender<Bytes>,
     // task in charge of getting response out of the PTY process and sending it to VTE
-    output_task: NoResTask,
+    output_task: BackgroundTask<Error>,
     // can be watched to see if the pane has been closed (or underlying PTY process terminated)
     closed_rx: watch::Receiver<()>,
     // virtual terminal emulator
     vte: Arc<Mutex<Parser>>,
     // task that extracts the VTE output state and sends it to subscribers
-    vte_task: NoResTask,
+    vte_task: BackgroundTask<Error>,
     // kept around for constructing recievers from subscribe
     vte_output_tx: broadcast::Sender<Bytes>,
     // previous state of the vte display

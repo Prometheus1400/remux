@@ -1,16 +1,17 @@
 use std::sync::Arc;
 
+use remux_core::types::BackgroundTask;
 use tokio::{
     net::UnixStream,
     sync::{Mutex, RwLock},
 };
 
-use crate::{session::Session, types::NoResTask};
+use crate::{error::Error, session::Session};
 
 pub struct ClientSession {
     stream: Arc<RwLock<UnixStream>>,
     attached_session: Option<Arc<Mutex<Session>>>,
-    session_task: Option<NoResTask>,
+    session_task: Option<BackgroundTask<Error>>,
 }
 impl ClientSession {
     pub fn new(stream: UnixStream) -> Self {

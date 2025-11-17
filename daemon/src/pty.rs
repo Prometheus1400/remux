@@ -14,15 +14,15 @@ use nix::{
     },
     unistd::{self, execvp},
 };
+use remux_core::types::{BackgroundTask};
 use tokio::{
     io::unix::AsyncFd,
-    sync::{mpsc, watch},
+    sync::mpsc,
 };
 use tracing::{debug, error, info, trace};
 
 use crate::{
     error::{Error, Result},
-    types::NoResTask,
 };
 
 pub struct PtyProcessBuilder {
@@ -75,7 +75,7 @@ impl PtyProcessBuilder {
                     return Err(Error::Custom("fcntl error".into()));
                 }
 
-                let pty_task: NoResTask = tokio::spawn(async move {
+                let pty_task: BackgroundTask<Error> = tokio::spawn(async move {
                     let async_fd = AsyncFd::new(master)?;
                     loop {
                         tokio::select! {
@@ -162,7 +162,7 @@ pub struct PtyProcesss {
     // channels for sending to pty process -> sends into child process
     pty_tx: mpsc::UnboundedSender<Bytes>,
     // tokyo tasks
-    pty_task: NoResTask,
+    pty_task: BackgroundTask<Error>,
 }
 
 #[allow(unused)]

@@ -4,6 +4,7 @@ use std::{
 };
 
 use bytes::Bytes;
+use remux_core::types::BackgroundTask;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::UnixStream,
@@ -14,7 +15,6 @@ use tracing::debug;
 use crate::{
     error::{Error, Result},
     pane::{Pane, PaneBuilder},
-    types::NoResTask,
 };
 
 pub type SharedSessionTable = LazyLock<Arc<Mutex<SessionTable>>>;
@@ -57,13 +57,13 @@ impl Session {
         self.pane.redraw().await;
     }
 
-    pub async fn attach_stream(&mut self, stream: Arc<RwLock<UnixStream>>) -> NoResTask {
+    pub async fn attach_stream(&mut self, stream: Arc<RwLock<UnixStream>>) -> BackgroundTask<Error> {
         // when this goes out of scope the subscriber should be dropped
         let mut rx = self.pane.subscribe();
         self.full_redraw().await;
         let pane_tx = self.pane.get_sender().clone();
         let mut closed_rx = self.pane.get_closed_watcher().clone();
-        let stream_task: NoResTask = tokio::spawn(async move {
+        let stream_task: BackgroundTask<Error> = tokio::spawn(async move {
             let mut buf = [0u8; 1024];
             loop {
                 tokio::select! {

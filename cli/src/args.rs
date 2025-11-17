@@ -1,6 +1,8 @@
 use clap::{Parser, Subcommand};
 use remux_core::messages::{RequestBody, RequestMessage};
 
+use crate::term;
+
 #[derive(Parser, Debug)]
 pub struct Args {
     #[command(subcommand)]
@@ -28,7 +30,9 @@ pub enum SessionCommands {
 impl Into<RequestBody> for Commands {
     fn into(self) -> RequestBody {
         match self {
-            Self::Attach { session_id } => RequestBody::Attach { session_id },
+            Self::Attach { session_id } => {
+                let (rows, cols) = term::get_term_size().unwrap();
+                RequestBody::Attach { session_id, term_rows: rows, term_cols: cols }},
             Self::Session { action } => action.into(),
         }
     }
