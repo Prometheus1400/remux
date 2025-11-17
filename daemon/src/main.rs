@@ -5,6 +5,7 @@ mod pane;
 mod pty;
 mod session;
 mod types;
+mod window;
 
 use daemon::RemuxDaemon;
 use tracing::{error, info};
