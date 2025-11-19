@@ -4,19 +4,20 @@ use bytes::Bytes;
 use tokio::sync::mpsc;
 
 use crate::{
-    actor::{Actor, ActorHandle},
-    client::ClientHandle,
-    session::{Session, SessionHandle},
+    actors::{
+        client::ClientHandle,
+        session::{Session, SessionHandle},
+    },
+    error::Result,
+    prelude::*,
 };
-
-use tracing::trace;
 
 pub enum SessionManagerEvent {
     ClientConnect {
         client_id: u32,
         client_handle: ClientHandle,
         session_id: u32,
-        create_session: bool
+        create_session: bool,
     },
     ClientDisconnect {
         client_id: u32,
@@ -34,53 +35,30 @@ pub enum SessionManagerEvent {
 pub struct SessionManager {
     handle: SessionManagerHandle,
     rx: mpsc::Receiver<SessionManagerEvent>,
-    session_table: HashMap<u32, SessionHandle>,
-    client_table: HashMap<u32, ClientHandle>,
-    session_to_client_mapping: HashMap<u32, Vec<u32>>,
-    client_to_session_mapping: HashMap<u32, u32>,
+    sessions: HashMap<u32, SessionHandle>,
+    clients: HashMap<u32, ClientHandle>,
+    session_to_client_mapping: HashMap<u32, Vec<u32>>, // support multiple clients attached to same session
+    client_to_session_mapping: HashMap<u32, u32>,      // one client can only attach to one session
 }
 impl SessionManager {
-    pub fn new() -> Self {
+    pub fn spawn() -> Result<SessionManagerHandle> {
+        let session_manager = SessionManager::new();
+        session_manager.run()
+    }
+
+    fn new() -> Self {
         let (tx, rx) = mpsc::channel(10);
         let handle = SessionManagerHandle { tx };
-        let session_one_handle = Session::new(1, handle.clone()).run().unwrap();
-        let mut session_table = HashMap::new();
-        session_table.insert(1u32, session_one_handle);
-        let mut session_to_client_mapping = HashMap::new();
-        session_to_client_mapping.insert(1u32, vec![]);
         Self {
             handle,
             rx,
-            session_table,
-            client_table: HashMap::new(),
-            session_to_client_mapping,
+            sessions: HashMap::new(),
+            clients: HashMap::new(),
+            session_to_client_mapping: HashMap::new(),
             client_to_session_mapping: HashMap::new(),
         }
     }
 
-    async fn handle_client_connect(&mut self, client_id: u32, client_handle: ClientHandle, session_id: u32, create_session: bool) {
-        self.client_table.insert(client_id, client_handle);
-        let clients = self.session_to_client_mapping.entry(session_id).or_insert(vec![]);
-        clients.push(client_id);
-        self.client_to_session_mapping.insert(client_id,session_id); 
-
-        let mut session_handle = self.session_table.get_mut(&session_id).unwrap();
-        session_handle.send_new_connection().await;
-    }
-    async fn handle_client_send_user_input(&mut self, client_id: u32, bytes: Bytes) {
-        if let Some(session_id) = self.client_to_session_mapping.get(&client_id) {
-            let session_handle = self.session_table.get_mut(session_id).unwrap();
-            session_handle.send_user_input(bytes).await;
-        }
-    }
-    async fn handle_session_send_output(&mut self, session_id: u32, bytes: Bytes) {
-        for client_id in self.session_to_client_mapping.get(&session_id).unwrap() {
-            let client_handle = self.client_table.get_mut(client_id).unwrap();
-            client_handle.send_session_output(bytes.clone()).await;
-        }
-    }
-}
-impl Actor<SessionManagerHandle> for SessionManager {
     fn run(mut self) -> crate::error::Result<SessionManagerHandle> {
         let handle_clone = self.handle.clone();
         let _task = tokio::spawn({
@@ -113,6 +91,51 @@ impl Actor<SessionManagerHandle> for SessionManager {
 
         Ok(handle_clone)
     }
+
+    async fn handle_client_connect(
+        &mut self,
+        client_id: u32,
+        mut client_handle: ClientHandle,
+        session_id: u32,
+        create_session: bool,
+    ) {
+        // session doesn't exist either send client error or create it
+        if !self.sessions.contains_key(&session_id) {
+            if create_session {
+                let new_session = Session::spawn(session_id, self.handle.clone()).unwrap();
+                self.sessions.insert(session_id, new_session);
+            } else {
+                client_handle.failed_attach_to_session().await;
+                return;
+            }
+        }
+        // session exists
+        self.clients.insert(client_id, client_handle);
+        let clients = self
+            .session_to_client_mapping
+            .entry(session_id)
+            .or_insert(vec![]);
+        clients.push(client_id);
+        self.client_to_session_mapping.insert(client_id, session_id);
+
+        let session_handle = self
+            .sessions
+            .get_mut(&session_id)
+            .expect("session should exist here");
+        session_handle.send_new_connection().await;
+    }
+    async fn handle_client_send_user_input(&mut self, client_id: u32, bytes: Bytes) {
+        if let Some(session_id) = self.client_to_session_mapping.get(&client_id) {
+            let session_handle = self.sessions.get_mut(session_id).unwrap();
+            session_handle.send_user_input(bytes).await;
+        }
+    }
+    async fn handle_session_send_output(&mut self, session_id: u32, bytes: Bytes) {
+        for client_id in self.session_to_client_mapping.get(&session_id).unwrap() {
+            let client_handle = self.clients.get_mut(client_id).unwrap();
+            client_handle.send_session_output(bytes.clone()).await;
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -132,7 +155,7 @@ impl SessionManagerHandle {
                 client_id,
                 client_handle,
                 session_id,
-                create_session: true
+                create_session: true,
             })
             .await
             .unwrap();
@@ -149,8 +172,6 @@ impl SessionManagerHandle {
             .await
             .unwrap();
     }
-}
-impl ActorHandle for SessionManagerHandle {
     async fn kill(&self) -> crate::error::Result<()> {
         todo!()
     }

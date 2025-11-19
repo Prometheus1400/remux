@@ -1,7 +1,4 @@
-use std::collections::HashMap;
-
 use bytes::Bytes;
-use rand::Rng;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::UnixStream,
@@ -9,13 +6,11 @@ use tokio::{
 };
 use tracing::trace;
 
-use crate::{
-    actor::{Actor, ActorHandle},
-    session_manager::SessionManagerHandle,
-};
+use crate::{actors::session_manager::SessionManagerHandle, error::EventSendError, prelude::*};
 
 pub enum ClientEvent {
     AttachToSession(u32),
+    FailedAttachToSession,
     SessionOutput(Bytes),
 }
 
@@ -27,7 +22,14 @@ pub struct Client {
     session_manager_handle: SessionManagerHandle,
 }
 impl Client {
-    pub fn new(stream: UnixStream, session_manager_handle: SessionManagerHandle) -> Self {
+    pub fn spawn(
+        stream: UnixStream,
+        session_manager_handle: SessionManagerHandle,
+    ) -> Result<ClientHandle> {
+        let client = Self::new(stream, session_manager_handle);
+        client.run()
+    }
+    fn new(stream: UnixStream, session_manager_handle: SessionManagerHandle) -> Self {
         let (tx, rx) = mpsc::channel(10);
         let handle = ClientHandle { tx };
         let id: u32 = rand::random();
@@ -39,8 +41,6 @@ impl Client {
             session_manager_handle,
         }
     }
-}
-impl Actor<ClientHandle> for Client {
     fn run(mut self) -> crate::error::Result<ClientHandle> {
         trace!("in client run");
         let handle_clone = self.handle.clone();
@@ -58,6 +58,9 @@ impl Actor<ClientHandle> for Client {
                                 }
                                 SessionOutput(bytes) => {
                                     self.stream.write_all(&bytes).await.unwrap();
+                                },
+                                FailedAttachToSession => {
+                                    break;
                                 }
                             }
                         },
@@ -78,18 +81,29 @@ pub struct ClientHandle {
     tx: mpsc::Sender<ClientEvent>,
 }
 impl ClientHandle {
-    pub async fn send_session_output(&mut self, bytes: Bytes) {
-        self.tx
+    pub async fn send_session_output(&mut self, bytes: Bytes) -> Result<()> {
+        Ok(self
+            .tx
             .send(ClientEvent::SessionOutput(bytes))
+            .await
+            .map_err(EventSendError::from)?)
+    }
+
+    pub async fn attach_to_session(&mut self, session_id: u32) -> Result<()> {
+        Ok(self
+            .tx
+            .send(ClientEvent::AttachToSession(session_id))
+            .await
+            .map_err(EventSendError::from)?)
+    }
+
+    pub async fn failed_attach_to_session(&mut self) {
+        self.tx
+            .send(ClientEvent::FailedAttachToSession)
             .await
             .unwrap();
     }
 
-    pub async fn attach_to_session(&mut self, session_id: u32) {
-        self.tx.send(ClientEvent::AttachToSession(session_id)).await.unwrap();
-    }
-}
-impl ActorHandle for ClientHandle {
     async fn kill(&self) -> crate::error::Result<()> {
         todo!()
     }

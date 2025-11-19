@@ -1,19 +1,12 @@
-mod actor;
-mod window;
-mod client;
-mod session_manager;
+mod actors;
 mod daemon;
 mod error;
-mod pane;
-mod pty;
-mod session;
-mod types;
+mod prelude;
 
 use daemon::RemuxDaemon;
-use tracing::{error, info};
 use tracing_subscriber::FmtSubscriber;
 
-use crate::error::Result;
+use crate::prelude::*;
 
 async fn run() -> Result<()> {
     let subscriber = FmtSubscriber::builder()

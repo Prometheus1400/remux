@@ -18,43 +18,13 @@ use nix::{
     unistd::{self, Pid, execvp},
 };
 use tokio::{io::unix::AsyncFd, sync::mpsc};
-use tracing::{debug, error, info, trace};
 
-use crate::{
-    actor::{Actor, ActorHandle}, error::{Error, Result}, pane::PaneHandle, types::DaemonTask
-};
+use crate::{actors::pane::PaneHandle, prelude::*};
 
 #[derive(Debug, Clone)]
 pub enum PtyEvent {
     Kill,
     Input(Bytes),
-}
-
-pub struct PtyBuilder {
-    pane_handle: PaneHandle,
-    exit_callbacks: Vec<Box<dyn FnOnce() + Send + Sync + 'static>>,
-}
-
-#[allow(unused)]
-impl PtyBuilder {
-    pub fn new(pane_handle: PaneHandle) -> Self {
-        Self {
-            pane_handle,
-            exit_callbacks: vec![],
-        }
-    }
-
-    pub fn with_exit_callback<F>(mut self, callback: F) -> Self
-    where
-        F: FnOnce() + Send + Sync + 'static,
-    {
-        self.exit_callbacks.push(Box::new(callback));
-        self
-    }
-
-    pub fn build(self) -> Pty {
-        Pty::new(self)
-    }
 }
 
 pub struct Pty {
@@ -65,10 +35,14 @@ pub struct Pty {
     pty_tx: mpsc::UnboundedSender<Bytes>,
     pty_rx: mpsc::UnboundedReceiver<Bytes>,
     pane_handle: PaneHandle,
-    exit_callbacks: Vec<Box<dyn FnOnce() + Send + Sync + 'static>>,
 }
 impl Pty {
-    fn new(builder: PtyBuilder) -> Self {
+    pub fn spawn(pane_handle: PaneHandle) -> Result<PtyHandle> {
+        let pty = Pty::new(pane_handle);
+        pty.run()
+    }
+
+    fn new(pane_handle: PaneHandle) -> Self {
         let (tx, rx) = mpsc::channel::<PtyEvent>(10);
         let (pty_tx, pty_rx) = mpsc::unbounded_channel::<Bytes>();
         Self {
@@ -76,24 +50,10 @@ impl Pty {
             rx,
             pty_tx,
             pty_rx,
-            pane_handle: builder.pane_handle,
-            exit_callbacks: builder.exit_callbacks,
+            pane_handle,
         }
     }
 
-    fn handle_input(&mut self, bytes: Bytes) -> Result<()> {
-        self.pty_tx
-            .send(bytes)
-            .map_err(|_| Error::Custom("error sending to pty_tx".to_owned()))
-    }
-
-    fn handle_kill(child: Pid) -> Result<()> {
-        kill(child, Signal::SIGKILL)?;
-        info!("killing pty child process {child}");
-        Ok(())
-    }
-}
-impl Actor<PtyHandle> for Pty {
     fn run(mut self) -> Result<PtyHandle> {
         debug!("forking and spawning child PTY process");
         let fork_result = unsafe { forkpty(None, None)? };
@@ -184,11 +144,8 @@ impl Actor<PtyHandle> for Pty {
                         // TODO: need to send some sort of event that eventually triggers the
                         // corresponding pane to get killed too
                         // can probably use these callbacks
-                        for callback in self.exit_callbacks.drain(..) {
-                            callback();
-                        }
                         debug!("stopping PtyProcess run");
-                        self.pane_handle.kill().await.unwrap();
+                        self.pane_handle.pty_died().await.unwrap();
                         Ok(())
                     }
                 });
@@ -197,14 +154,36 @@ impl Actor<PtyHandle> for Pty {
             }
         }
     }
+
+    fn handle_input(&mut self, bytes: Bytes) -> Result<()> {
+        self.pty_tx
+            .send(bytes)
+            .map_err(|_| Error::Custom("error sending to pty_tx".to_owned()))
+    }
+
+    fn handle_kill(child: Pid) -> Result<()> {
+        kill(child, Signal::SIGKILL)?;
+        info!("killing pty child process {child}");
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone)]
 pub struct PtyHandle {
     tx: mpsc::Sender<PtyEvent>,
 }
-impl ActorHandle for PtyHandle {
-    async fn kill(&self) -> Result<()> {
+impl PtyHandle {
+    fn new(tx: mpsc::Sender<PtyEvent>) -> Self {
+        Self { tx }
+    }
+    pub async fn send(&self, bytes: Bytes) -> Result<()> {
+        self.tx
+            .send(PtyEvent::Input(bytes))
+            .await
+            .map_err(|_| Error::Custom("error sending input to pty process".to_owned()))
+    }
+
+    pub async fn kill(&self) -> Result<()> {
         self.tx
             .send(PtyEvent::Kill)
             .await
@@ -212,18 +191,6 @@ impl ActorHandle for PtyHandle {
     }
     fn is_alive(&self) -> bool {
         !self.tx.is_closed()
-    }
-}
-impl PtyHandle {
-    fn new(tx: mpsc::Sender<PtyEvent>) -> Self {
-        Self { tx }
-    }
-
-    pub async fn send(&self, bytes: Bytes) -> Result<()> {
-        self.tx
-            .send(PtyEvent::Input(bytes))
-            .await
-            .map_err(|_| Error::Custom("error sending input to pty process".to_owned()))
     }
 }
 

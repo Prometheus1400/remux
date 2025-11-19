@@ -1,7 +1,7 @@
 use derive_more::Display;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use tokio::{
-    io::{AsyncRead, AsyncReadExt, AsyncWriteExt},
+    io::{AsyncReadExt, AsyncWriteExt},
     net::UnixStream,
 };
 

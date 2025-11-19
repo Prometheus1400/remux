@@ -1,11 +1,14 @@
 use bytes::Bytes;
 use tokio::sync::mpsc;
+use tracing::trace;
 
 use crate::{
-    actor::{Actor, ActorHandle},
-    pane::{Pane, PaneHandle}, session::SessionHandle,
+    actors::{
+        pane::{Pane, PaneHandle},
+        session::SessionHandle,
+    },
+    error::Result,
 };
-use tracing::trace;
 
 #[derive(Debug)]
 pub enum WindowEvent {
@@ -39,10 +42,14 @@ impl Window {
     }
 }
 impl Window {
-    pub fn new(session_handle: SessionHandle) -> Self {
+    pub fn spawn(session_handle: SessionHandle) -> Result<WindowHandle> {
+        let window = Window::new(session_handle);
+        window.run()
+    }
+    fn new(session_handle: SessionHandle) -> Self {
         let (tx, rx) = mpsc::channel(10);
         let handle = WindowHandle { tx };
-        let pane_handle = Pane::new(handle.clone()).run().unwrap();
+        let pane_handle = Pane::spawn(handle.clone()).unwrap();
         Self {
             session_handle,
             handle,
@@ -51,8 +58,6 @@ impl Window {
             window_state: WindowState::Focused,
         }
     }
-}
-impl Actor<WindowHandle> for Window {
     fn run(mut self) -> crate::error::Result<WindowHandle> {
         let handle_clone = self.handle.clone();
         let _task = tokio::spawn({
@@ -72,7 +77,7 @@ impl Actor<WindowHandle> for Window {
                                 }
                                 Redraw => {
                                     trace!("Window: Redraw");
-                                    
+                                    self.pane_handle.rerender().await.unwrap();
                                 }
                                 Kill => {
                                     trace!("Window: Kill");
@@ -95,24 +100,16 @@ pub struct WindowHandle {
 }
 impl WindowHandle {
     pub async fn send_pane_output(&self, bytes: Bytes) {
-        self.tx
-            .send(WindowEvent::PaneOutput(bytes))
-            .await
-            .unwrap();
+        self.tx.send(WindowEvent::PaneOutput(bytes)).await.unwrap();
     }
     pub async fn send_user_input(&self, bytes: Bytes) {
-        self.tx
-            .send(WindowEvent::UserInput(bytes))
-            .await
-            .unwrap();
+        self.tx.send(WindowEvent::UserInput(bytes)).await.unwrap();
     }
 
     pub async fn redraw(&self) {
         self.tx.send(WindowEvent::Redraw).await.unwrap();
     }
-}
-impl ActorHandle for WindowHandle {
-    async fn kill(&self) -> crate::error::Result<()> {
+    pub async fn kill(&self) -> crate::error::Result<()> {
         self.tx.send(WindowEvent::Kill).await.unwrap();
         Ok(())
     }

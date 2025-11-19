@@ -1,20 +1,18 @@
-use std::{
-    fs::{File, remove_file},
-    time::Duration,
-};
+use std::fs::{File, remove_file};
 
 use remux_core::{
     daemon_utils::{get_sock_path, lock_daemon_file},
     messages::{self, RequestBody},
 };
 use tokio::net::{UnixListener, UnixStream};
-use tracing::{debug, error, info, instrument};
 
 use crate::{
-    actor::Actor,
-    client::Client,
+    actors::{
+        client::Client,
+        session_manager::{SessionManager, SessionManagerHandle},
+    },
     error::Result,
-    session_manager::{SessionManager, SessionManagerHandle},
+    prelude::*,
 };
 
 pub struct RemuxDaemon {
@@ -26,7 +24,7 @@ impl RemuxDaemon {
     /// Makes sure there can only ever be once instance at the
     /// process level through use of OS level file locks
     pub fn new() -> Result<Self> {
-        let session_manager_handle = SessionManager::new().run().unwrap();
+        let session_manager_handle = SessionManager::spawn().unwrap();
         Ok(Self {
             _daemon_file: lock_daemon_file()?,
             session_manager_handle,
@@ -46,7 +44,8 @@ impl RemuxDaemon {
         loop {
             let (stream, addr) = listener.accept().await?;
             info!("accepting connection from: {:?}", addr.as_pathname());
-            if let Err(e) = handle_communication(self.session_manager_handle.clone(), stream).await {
+            if let Err(e) = handle_communication(self.session_manager_handle.clone(), stream).await
+            {
                 error!("{e}");
             }
         }
@@ -62,7 +61,7 @@ async fn handle_communication(
     match req.body {
         RequestBody::Attach { session_id } => {
             debug!("running new client actor");
-            let mut client = Client::new(stream, session_manager_handle).run().unwrap();
+            let mut client = Client::spawn(stream, session_manager_handle).unwrap();
             client.attach_to_session(session_id).await;
         }
         RequestBody::SessionsList => {
