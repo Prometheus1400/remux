@@ -54,7 +54,7 @@ impl Message for ResponseMessage {
 pub enum RequestBody {
     #[display("Attach: {{session_id: {session_id}}}")]
     Attach {
-        session_id: u16,
+        session_id: u32,
     },
     // session commands
     SessionsList,
@@ -64,7 +64,7 @@ pub enum RequestBody {
 #[serde(tag = "type")]
 pub enum ResponseBody {
     #[display("sessions: {sessions:?}")]
-    SessionsList { sessions: Vec<u16> },
+    SessionsList { sessions: Vec<u32> },
 }
 
 pub async fn send_and_recv<Req, Res>(stream: &mut UnixStream, message: &Req) -> Result<Res>
