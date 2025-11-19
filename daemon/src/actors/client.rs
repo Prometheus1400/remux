@@ -4,9 +4,8 @@ use tokio::{
     net::UnixStream,
     sync::mpsc,
 };
-use tracing::trace;
 
-use crate::{actors::session_manager::SessionManagerHandle, error::EventSendError, prelude::*};
+use crate::{actors::session_manager::SessionManagerHandle, prelude::*};
 
 pub enum ClientEvent {
     AttachToSession(u32),
@@ -54,18 +53,30 @@ impl Client {
                             use ClientEvent::*;
                             match event {
                                 AttachToSession(session_id) => {
-                                    self.session_manager_handle.connect_client(self.id, handle.clone(), session_id).await;
+                                    trace!("Client: AttachToSession");
+                                    self.session_manager_handle.connect_client(self.id, handle.clone(), session_id).await.unwrap();
                                 }
                                 SessionOutput(bytes) => {
+                                    trace!("Client: SessionOutput");
                                     self.stream.write_all(&bytes).await.unwrap();
                                 },
                                 FailedAttachToSession => {
-                                    break;
+                                    trace!("Client: FailedAttachToSession");
+                                    todo!();
                                 }
                             }
                         },
                         Ok(n) = self.stream.read(&mut buf) => {
-                            self.session_manager_handle.client_send_user_input(self.id, Bytes::copy_from_slice(&buf[..n])).await;
+                            match n {
+                                0 => {
+                                    // client disconnected
+                                    self.session_manager_handle.disconnect_client(self.id).await.unwrap();
+                                    break;
+                                },
+                                _ => {
+                                    self.session_manager_handle.client_send_user_input(self.id, Bytes::copy_from_slice(&buf[..n])).await.unwrap();
+                                }
+                            }
                         }
                     }
                 }
@@ -80,28 +91,21 @@ impl Client {
 pub struct ClientHandle {
     tx: mpsc::Sender<ClientEvent>,
 }
+#[allow(unused)]
 impl ClientHandle {
-    pub async fn send_session_output(&mut self, bytes: Bytes) -> Result<()> {
-        Ok(self
-            .tx
-            .send(ClientEvent::SessionOutput(bytes))
-            .await
-            .map_err(EventSendError::from)?)
+    pub async fn send_output(&mut self, bytes: Bytes) -> Result<()> {
+        Ok(self.tx.send(ClientEvent::SessionOutput(bytes)).await?)
     }
 
-    pub async fn attach_to_session(&mut self, session_id: u32) -> Result<()> {
+    pub async fn request_session_attach(&mut self, session_id: u32) -> Result<()> {
         Ok(self
             .tx
             .send(ClientEvent::AttachToSession(session_id))
-            .await
-            .map_err(EventSendError::from)?)
+            .await?)
     }
 
-    pub async fn failed_attach_to_session(&mut self) {
-        self.tx
-            .send(ClientEvent::FailedAttachToSession)
-            .await
-            .unwrap();
+    pub async fn notify_attach_failed(&mut self) -> Result<()> {
+        Ok(self.tx.send(ClientEvent::FailedAttachToSession).await?)
     }
 
     async fn kill(&self) -> crate::error::Result<()> {

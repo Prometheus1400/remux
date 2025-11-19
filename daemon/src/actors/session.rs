@@ -10,6 +10,7 @@ use crate::{
     prelude::*,
 };
 
+#[allow(unused)]
 #[derive(Debug)]
 pub enum SessionEvent {
     UserInput(Bytes),
@@ -48,27 +49,25 @@ impl Session {
         let _task = tokio::spawn({
             async move {
                 loop {
-                    tokio::select! {
-                        Some(event) = self.rx.recv() => {
-                            use SessionEvent::*;
-                            match event {
-                                UserInput(bytes) => {
-                                    trace!("Session: UserInput");
-                                    self.handle_user_input(bytes).await.unwrap();
-                                },
-                                WindowOutput(bytes) => {
-                                    trace!("Session: WindowOutput");
-                                    self.handle_window_output(bytes).await.unwrap();
-                                },
-                                NewConnection => {
-                                    trace!("Session: WindowOutput");
-                                    self.handle_new_connection().await.unwrap();
-                                }
-                                Kill => {
-                                    trace!("Session: Kill");
-                                    self.window_handle.kill().await.unwrap();
-                                    break;
-                                },
+                    if let Some(event) = self.rx.recv().await {
+                        use SessionEvent::*;
+                        match event {
+                            UserInput(bytes) => {
+                                trace!("Session: UserInput");
+                                self.handle_user_input(bytes).await.unwrap();
+                            }
+                            WindowOutput(bytes) => {
+                                trace!("Session: WindowOutput");
+                                self.handle_window_output(bytes).await.unwrap();
+                            }
+                            NewConnection => {
+                                trace!("Session: WindowOutput");
+                                self.handle_new_connection().await.unwrap();
+                            }
+                            Kill => {
+                                trace!("Session: Kill");
+                                self.window_handle.kill().await.unwrap();
+                                break;
                             }
                         }
                     }
@@ -80,45 +79,35 @@ impl Session {
     }
 
     async fn handle_user_input(&self, bytes: Bytes) -> Result<()> {
-        self.window_handle.send_user_input(bytes).await;
-        Ok(())
+        self.window_handle.send_user_input(bytes).await
     }
 
     async fn handle_window_output(&self, bytes: Bytes) -> Result<()> {
         self.session_manager_handle
             .session_send_output(self.id, bytes)
-            .await;
-        Ok(())
+            .await
     }
 
     async fn handle_new_connection(&self) -> Result<()> {
-        self.window_handle.redraw().await;
-        Ok(())
+        self.window_handle.redraw().await
     }
 }
 #[derive(Debug, Clone)]
 pub struct SessionHandle {
     tx: mpsc::Sender<SessionEvent>,
 }
+#[allow(unused)]
 impl SessionHandle {
-    pub async fn send_user_input(&mut self, bytes: Bytes) {
-        self.tx.send(SessionEvent::UserInput(bytes)).await.unwrap();
+    pub async fn send_user_input(&mut self, bytes: Bytes) -> Result<()> {
+        Ok(self.tx.send(SessionEvent::UserInput(bytes)).await?)
     }
-    pub async fn send_window_output(&mut self, bytes: Bytes) {
-        self.tx
-            .send(SessionEvent::WindowOutput(bytes))
-            .await
-            .unwrap();
+    pub async fn send_window_output(&mut self, bytes: Bytes) -> Result<()> {
+        Ok(self.tx.send(SessionEvent::WindowOutput(bytes)).await?)
     }
-    pub async fn send_new_connection(&mut self) {
-        self.tx.send(SessionEvent::NewConnection).await.unwrap();
+    pub async fn send_new_connection(&mut self) -> Result<()> {
+        Ok(self.tx.send(SessionEvent::NewConnection).await?)
     }
     pub async fn kill(&self) -> Result<()> {
-        self.tx.send(SessionEvent::Kill).await.unwrap();
-        Ok(())
-    }
-
-    fn is_alive(&self) -> bool {
-        !self.tx.is_closed()
+        Ok(self.tx.send(SessionEvent::Kill).await?)
     }
 }

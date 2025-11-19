@@ -64,8 +64,9 @@ impl Pty {
             Parent { child, master } => {
                 debug!("child PID: {}", child.as_raw());
                 set_fd_nonblocking(&master)?;
-                let handle = PtyHandle::new(self.tx.clone());
-
+                let handle = PtyHandle {
+                    tx: self.tx.clone(),
+                };
                 let async_fd = AsyncFd::new(master)?;
                 let _task: DaemonTask = tokio::spawn({
                     let handler = handle.clone();
@@ -77,7 +78,7 @@ impl Pty {
                                     let mut buf = [0u8; 1024];
                                     match guard.try_io(|fd| unistd::read(fd.get_ref(), &mut buf).map_err(|e| e.into())) {
                                         Ok(Ok(n)) if n > 0 => {
-                                            self.pane_handle.send_output_from_pty(Bytes::copy_from_slice(&buf[..n])).await.unwrap()
+                                            self.pane_handle.send_output_from_pty(Bytes::copy_from_slice(&buf[..n])).await.unwrap();
                                         },
                                         Ok(Ok(_)) => {
                                             handler.kill().await?;
@@ -115,10 +116,14 @@ impl Pty {
                                 Some(event) = self.rx.recv() => {
                                     let res = match event.clone() {
                                         PtyEvent::Kill => {
+                                            trace!("Pty: Kill");
                                             Self::handle_kill(child)?;
                                             break;
                                         }
-                                        PtyEvent::Input(bytes) => self.handle_input(bytes.clone()),
+                                        PtyEvent::Input(bytes) => {
+                                            trace!("Pty: Input");
+                                            self.handle_input(bytes.clone())
+                                        },
                                     };
                                     if let Err(e) = res {
                                         error!("error handling {event:?} in PtyProcess: {e}");
@@ -141,11 +146,8 @@ impl Pty {
                             Err(Errno::ECHILD) => info!("No such child process: {}", child),
                             Err(err) => error!("waitpid failed: {}", err),
                         }
-                        // TODO: need to send some sort of event that eventually triggers the
-                        // corresponding pane to get killed too
-                        // can probably use these callbacks
                         debug!("stopping PtyProcess run");
-                        self.pane_handle.pty_died().await.unwrap();
+                        self.pane_handle.notify_pty_died().await.unwrap();
                         Ok(())
                     }
                 });
@@ -173,24 +175,11 @@ pub struct PtyHandle {
     tx: mpsc::Sender<PtyEvent>,
 }
 impl PtyHandle {
-    fn new(tx: mpsc::Sender<PtyEvent>) -> Self {
-        Self { tx }
-    }
     pub async fn send(&self, bytes: Bytes) -> Result<()> {
-        self.tx
-            .send(PtyEvent::Input(bytes))
-            .await
-            .map_err(|_| Error::Custom("error sending input to pty process".to_owned()))
+        Ok(self.tx.send(PtyEvent::Input(bytes)).await?)
     }
-
     pub async fn kill(&self) -> Result<()> {
-        self.tx
-            .send(PtyEvent::Kill)
-            .await
-            .map_err(|_| Error::Custom("error sending kill to pty process".to_owned()))
-    }
-    fn is_alive(&self) -> bool {
-        !self.tx.is_closed()
+        Ok(self.tx.send(PtyEvent::Kill).await?)
     }
 }
 

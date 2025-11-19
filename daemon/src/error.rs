@@ -44,53 +44,46 @@ pub enum Error {
 #[derive(Error, Debug)]
 pub enum EventSendError {
     #[error("Client send error: {0}")]
-    ClientSend(SendError<ClientEvent>),
+    Client(SendError<ClientEvent>),
     #[error("Session Manager send error: {0}")]
-    SessionManagerSend(SendError<SessionManagerEvent>),
+    SessionManager(SendError<SessionManagerEvent>),
     #[error("Session send error: {0}")]
-    SessionSend(SendError<SessionEvent>),
+    Session(SendError<SessionEvent>),
     #[error("Window send error: {0}")]
-    WindowSend(SendError<WindowEvent>),
+    Window(SendError<WindowEvent>),
     #[error("Pane send error: {0}")]
-    PaneSend(SendError<PaneEvent>),
+    Pane(SendError<PaneEvent>),
     #[error("Pty send error: {0}")]
-    PtySend(SendError<PtyEvent>),
+    Pty(SendError<PtyEvent>),
 }
 
-impl From<SendError<ClientEvent>> for EventSendError {
+impl From<SendError<ClientEvent>> for Error {
     fn from(e: SendError<ClientEvent>) -> Self {
-        EventSendError::ClientSend(e)
+        Self::EventSend(EventSendError::Client(e))
     }
 }
-impl From<SendError<SessionManagerEvent>> for EventSendError {
+impl From<SendError<SessionManagerEvent>> for Error {
     fn from(e: SendError<SessionManagerEvent>) -> Self {
-        EventSendError::SessionManagerSend(e)
+        Self::EventSend(EventSendError::SessionManager(e))
     }
 }
-impl From<SendError<SessionEvent>> for EventSendError {
+impl From<SendError<SessionEvent>> for Error {
     fn from(e: SendError<SessionEvent>) -> Self {
-        EventSendError::SessionSend(e)
+        Self::EventSend(EventSendError::Session(e))
     }
 }
-impl From<SendError<WindowEvent>> for EventSendError {
+impl From<SendError<WindowEvent>> for Error {
     fn from(e: SendError<WindowEvent>) -> Self {
-        EventSendError::WindowSend(e)
+        Self::EventSend(EventSendError::Window(e))
     }
 }
-impl From<SendError<PaneEvent>> for EventSendError {
+impl From<SendError<PaneEvent>> for Error {
     fn from(e: SendError<PaneEvent>) -> Self {
-        EventSendError::PaneSend(e)
+        Self::EventSend(EventSendError::Pane(e))
     }
 }
-impl From<SendError<PtyEvent>> for EventSendError {
+impl From<SendError<PtyEvent>> for Error {
     fn from(e: SendError<PtyEvent>) -> Self {
-        EventSendError::PtySend(e)
-    }
-}
-
-// Propagate to top-level
-impl From<EventSendError> for Error {
-    fn from(e: EventSendError) -> Self {
-        Error::EventSend(e)
+        Self::EventSend(EventSendError::Pty(e))
     }
 }

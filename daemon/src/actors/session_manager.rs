@@ -12,6 +12,7 @@ use crate::{
     prelude::*,
 };
 
+#[allow(unused)]
 pub enum SessionManagerEvent {
     ClientConnect {
         client_id: u32,
@@ -64,24 +65,40 @@ impl SessionManager {
         let _task = tokio::spawn({
             async move {
                 loop {
-                    tokio::select! {
-                        Some(event) = self.rx.recv() => {
-                            use SessionManagerEvent::*;
-                            match event {
-                                ClientConnect {client_id, client_handle, session_id, create_session} => {
-                                    trace!("SessionManager: ClientConnect");
-                                    self.handle_client_connect(client_id, client_handle, session_id, create_session).await;
-                                },
-                                ClientSendUserInput {client_id, bytes} => {
-                                    trace!("SessionManager: ClientSendUserInput");
-                                    self.handle_client_send_user_input(client_id, bytes).await;
-                                },
-                                SessionSendOutput {session_id, bytes} => {
-                                    trace!("SessionManager: SessionSendOutput");
-                                    self.handle_session_send_output(session_id, bytes).await;
-                                },
-                                ClientDisconnect {..} => {
-                                todo!()}
+                    if let Some(event) = self.rx.recv().await {
+                        use SessionManagerEvent::*;
+                        match event {
+                            ClientConnect {
+                                client_id,
+                                client_handle,
+                                session_id,
+                                create_session,
+                            } => {
+                                trace!("SessionManager: ClientConnect");
+                                self.handle_client_connect(
+                                    client_id,
+                                    client_handle,
+                                    session_id,
+                                    create_session,
+                                )
+                                .await
+                                .unwrap();
+                            }
+                            ClientSendUserInput { client_id, bytes } => {
+                                trace!("SessionManager: ClientSendUserInput");
+                                self.handle_client_send_user_input(client_id, bytes)
+                                    .await
+                                    .unwrap();
+                            }
+                            SessionSendOutput { session_id, bytes } => {
+                                trace!("SessionManager: SessionSendOutput");
+                                self.handle_session_send_output(session_id, bytes)
+                                    .await
+                                    .unwrap();
+                            }
+                            ClientDisconnect { client_id } => {
+                                trace!("SessionManager: ClientDisconnect");
+                                self.handle_client_disconnect(client_id).await.unwrap();
                             }
                         }
                     }
@@ -98,15 +115,14 @@ impl SessionManager {
         mut client_handle: ClientHandle,
         session_id: u32,
         create_session: bool,
-    ) {
+    ) -> Result<()> {
         // session doesn't exist either send client error or create it
         if !self.sessions.contains_key(&session_id) {
             if create_session {
                 let new_session = Session::spawn(session_id, self.handle.clone()).unwrap();
                 self.sessions.insert(session_id, new_session);
             } else {
-                client_handle.failed_attach_to_session().await;
-                return;
+                client_handle.notify_attach_failed().await?;
             }
         }
         // session exists
@@ -122,19 +138,31 @@ impl SessionManager {
             .sessions
             .get_mut(&session_id)
             .expect("session should exist here");
-        session_handle.send_new_connection().await;
+        session_handle.send_new_connection().await
     }
-    async fn handle_client_send_user_input(&mut self, client_id: u32, bytes: Bytes) {
+    async fn handle_client_disconnect(&mut self, client_id: u32) -> Result<()> {
+        self.clients.remove(&client_id);
+        if let Some(session_id) = self.client_to_session_mapping.remove(&client_id) {
+            if let Some(clients) = self.session_to_client_mapping.get_mut(&session_id) {
+                clients.retain(|c| c != &client_id);
+            }
+        }
+        Ok(())
+    }
+    async fn handle_client_send_user_input(&mut self, client_id: u32, bytes: Bytes) -> Result<()> {
         if let Some(session_id) = self.client_to_session_mapping.get(&client_id) {
             let session_handle = self.sessions.get_mut(session_id).unwrap();
-            session_handle.send_user_input(bytes).await;
+            session_handle.send_user_input(bytes).await
+        } else {
+            Ok(())
         }
     }
-    async fn handle_session_send_output(&mut self, session_id: u32, bytes: Bytes) {
+    async fn handle_session_send_output(&mut self, session_id: u32, bytes: Bytes) -> Result<()> {
         for client_id in self.session_to_client_mapping.get(&session_id).unwrap() {
             let client_handle = self.clients.get_mut(client_id).unwrap();
-            client_handle.send_session_output(bytes.clone()).await;
+            client_handle.send_output(bytes.clone()).await?;
         }
+        Ok(())
     }
 }
 
@@ -149,34 +177,33 @@ impl SessionManagerHandle {
         client_id: u32,
         client_handle: ClientHandle,
         session_id: u32,
-    ) {
-        self.tx
+    ) -> Result<()> {
+        Ok(self
+            .tx
             .send(SessionManagerEvent::ClientConnect {
                 client_id,
                 client_handle,
                 session_id,
                 create_session: true,
             })
-            .await
-            .unwrap();
+            .await?)
     }
-    pub async fn client_send_user_input(&self, client_id: u32, bytes: Bytes) {
-        self.tx
+    pub async fn disconnect_client(&self, client_id: u32) -> Result<()> {
+        Ok(self
+            .tx
+            .send(SessionManagerEvent::ClientDisconnect { client_id })
+            .await?)
+    }
+    pub async fn client_send_user_input(&self, client_id: u32, bytes: Bytes) -> Result<()> {
+        Ok(self
+            .tx
             .send(SessionManagerEvent::ClientSendUserInput { client_id, bytes })
-            .await
-            .unwrap();
+            .await?)
     }
-    pub async fn session_send_output(&self, session_id: u32, bytes: Bytes) {
-        self.tx
+    pub async fn session_send_output(&self, session_id: u32, bytes: Bytes) -> Result<()> {
+        Ok(self
+            .tx
             .send(SessionManagerEvent::SessionSendOutput { session_id, bytes })
-            .await
-            .unwrap();
-    }
-    async fn kill(&self) -> crate::error::Result<()> {
-        todo!()
-    }
-
-    fn is_alive(&self) -> bool {
-        todo!()
+            .await?)
     }
 }
