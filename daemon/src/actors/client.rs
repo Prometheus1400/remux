@@ -112,9 +112,11 @@ impl Client {
                                             },
                                             input_parser::ParsedEvents::KillPane => {
                                                 debug!("Client Event Input: kill pane");
+                                                self.session_manager_handle.client_send_kill_pane(self.id).await.unwrap();
                                             },
                                             input_parser::ParsedEvents::SplitPane => {
                                                 debug!("Client Event Input: split pane");
+                                                self.session_manager_handle.client_send_split_pane(self.id).await.unwrap();
                                             },
                                         }
                                     }
