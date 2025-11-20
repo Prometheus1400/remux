@@ -1,7 +1,9 @@
 mod actors;
+mod control_signals;
 mod daemon;
 mod error;
 mod prelude;
+mod input_parser;
 
 use daemon::RemuxDaemon;
 use tracing_subscriber::FmtSubscriber;
@@ -10,7 +12,7 @@ use crate::prelude::*;
 
 async fn run() -> Result<()> {
     let subscriber = FmtSubscriber::builder()
-        .with_max_level(tracing::Level::TRACE)
+        .with_max_level(tracing::Level::DEBUG)
         .finish();
     tracing::subscriber::set_global_default(subscriber)?;
 

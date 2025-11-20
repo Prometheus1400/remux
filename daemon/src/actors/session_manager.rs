@@ -122,11 +122,11 @@ impl SessionManager {
                 let new_session = Session::spawn(session_id, self.handle.clone()).unwrap();
                 self.sessions.insert(session_id, new_session);
             } else {
-                client_handle.notify_attach_failed().await?;
+                client_handle.notify_attach_failed(session_id).await?;
             }
         }
         // session exists
-        self.clients.insert(client_id, client_handle);
+        self.clients.insert(client_id, client_handle.clone());
         let clients = self
             .session_to_client_mapping
             .entry(session_id)
@@ -138,6 +138,7 @@ impl SessionManager {
             .sessions
             .get_mut(&session_id)
             .expect("session should exist here");
+        client_handle.notify_attach_succeeded(session_id).await?;
         session_handle.send_new_connection().await
     }
     async fn handle_client_disconnect(&mut self, client_id: u32) -> Result<()> {

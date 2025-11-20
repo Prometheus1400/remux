@@ -6,6 +6,7 @@ use crate::{
         pty::{Pty, PtyHandle},
         window::WindowHandle,
     },
+    control_signals::CLEAR,
     prelude::*,
 };
 
@@ -135,13 +136,8 @@ impl Pane {
         let cur_screen_state = self.vte.screen().clone();
         self.prev_screen_state = Some(cur_screen_state);
 
-        let clear_screen = b"\x1b[H\x1b[2J";
         let new_state = self.vte.screen().state_formatted();
-        let output = clear_screen
-            .iter()
-            .chain(new_state.iter())
-            .copied()
-            .collect();
+        let output = CLEAR.iter().chain(new_state.iter()).copied().collect();
         self.window_handle.send_pane_output(output).await
         // TODO : todo!("don't need to send this when pane is hidden");
         // match self.state {
