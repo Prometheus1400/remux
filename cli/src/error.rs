@@ -1,4 +1,4 @@
-use remux_core::messages::{RequestMessage, ResponseMessage};
+use remux_core::messages::RequestMessage;
 use thiserror::Error;
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -29,11 +29,6 @@ pub enum Error {
     #[error("Error sending message {message}: {source}")]
     SendRequestMessage {
         message: RequestMessage,
-        source: remux_core::error::Error,
-    },
-    #[error("Error sending message {message}: {source}")]
-    SendResponseMessage {
-        message: ResponseMessage,
         source: remux_core::error::Error,
     },
     // #[error("Error sending to tokio channel: {0}")]
