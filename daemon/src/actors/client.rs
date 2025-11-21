@@ -5,15 +5,20 @@ use tokio::{
     sync::mpsc,
 };
 
-use crate::{actors::session_manager::SessionManagerHandle, control_signals::CLEAR, input_parser::{self, InputParser}, prelude::*};
+use crate::{
+    actors::session_manager::SessionManagerHandle,
+    control_signals::CLEAR,
+    input_parser::{self, InputParser},
+    prelude::*,
+};
 
 #[allow(unused)]
 pub enum ClientEvent {
-    AttachToSession{session_id: u32},
-    SuccessAttachToSession{session_id: u32},
-    FailedAttachToSession{session_id: u32},
-    DetachFromSession{session_id: u32},
-    SessionOutput{bytes: Bytes},
+    AttachToSession { session_id: u32 },
+    SuccessAttachToSession { session_id: u32 },
+    FailedAttachToSession { session_id: u32 },
+    DetachFromSession { session_id: u32 },
+    SessionOutput { bytes: Bytes },
 }
 use ClientEvent::*;
 
@@ -21,7 +26,7 @@ use ClientEvent::*;
 enum ClientState {
     Unattached,
     Attaching(u32),
-    Attached(u32)
+    Attached(u32),
 }
 
 pub struct Client {
@@ -65,7 +70,6 @@ impl Client {
                 loop {
                     tokio::select! {
                         Some(event) = self.rx.recv() => {
-                            use ClientEvent::*;
                             match event {
                                 AttachToSession{session_id} => {
                                     trace!("Client: AttachToSession");
@@ -139,7 +143,7 @@ pub struct ClientHandle {
 }
 #[allow(unused)]
 impl ClientHandle {
-// Tuple variants
+    // Tuple variants
     handle_method!(send_output, SessionOutput, bytes: Bytes);
     handle_method!(request_session_attach, AttachToSession, session_id: u32);
     handle_method!(notify_attach_failed, FailedAttachToSession, session_id: u32);

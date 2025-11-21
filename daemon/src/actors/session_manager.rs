@@ -12,7 +12,6 @@ use crate::{
     prelude::*,
 };
 
-
 #[allow(unused)]
 pub enum SessionManagerEvent {
     // client -> session manager events
@@ -79,7 +78,6 @@ impl SessionManager {
             async move {
                 loop {
                     if let Some(event) = self.rx.recv().await {
-                        use SessionManagerEvent::*;
                         match event {
                             ClientConnect {
                                 client_id,

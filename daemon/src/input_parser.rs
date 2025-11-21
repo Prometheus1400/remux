@@ -1,6 +1,6 @@
 use bytes::Bytes;
-use crate::prelude::*;
 
+use crate::prelude::*;
 
 const CTRL_SPACE: u8 = 0x00;
 const PERCENT: u8 = 0x25;
@@ -23,7 +23,7 @@ impl InputParser {
 
     pub fn process(&mut self, input: &[u8]) -> Vec<ParsedEvents> {
         self.buf.extend(input);
-        
+
         let mut events = vec![];
         let mut p = 0;
         let mut i = 0;
@@ -44,7 +44,7 @@ impl InputParser {
                                 events.push(ParsedEvents::SplitPane);
                                 i += 2;
                                 p = i;
-                            },
+                            }
                             X => {
                                 let old: Vec<u8> = self.buf.drain(p..i).collect();
                                 if !old.is_empty() {
@@ -70,10 +70,8 @@ impl InputParser {
                         }
                         return events;
                     }
-                }, 
-                _ => {
-                    i += 1
                 }
+                _ => i += 1,
             }
         }
 

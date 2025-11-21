@@ -11,8 +11,8 @@ use crate::{
 
 #[derive(Debug)]
 pub enum WindowEvent {
-    UserInput{ bytes: Bytes },  // input from user
-    PaneOutput{ bytes: Bytes }, // output from pane
+    UserInput { bytes: Bytes },  // input from user
+    PaneOutput { bytes: Bytes }, // output from pane
     Redraw,
     Kill,
 }
@@ -67,13 +67,12 @@ impl Window {
             async move {
                 loop {
                     if let Some(event) = self.rx.recv().await {
-                        use WindowEvent::*;
                         match event {
-                            UserInput{bytes} => {
+                            UserInput { bytes } => {
                                 trace!("Window: UserInput");
                                 self.handle_user_input(bytes).await.unwrap();
                             }
-                            PaneOutput{bytes} => {
+                            PaneOutput { bytes } => {
                                 trace!("Window: PaneOutput");
                                 self.handle_pane_output(bytes).await.unwrap();
                             }
@@ -103,4 +102,5 @@ impl WindowHandle {
     handle_method!(send_pane_output, PaneOutput, bytes: Bytes);
     handle_method!(send_user_input, UserInput, bytes: Bytes);
     handle_method!(redraw, Redraw);
-    handle_method!(kill, Kill);}
+    handle_method!(kill, Kill);
+}

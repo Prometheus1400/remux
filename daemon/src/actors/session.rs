@@ -14,16 +14,16 @@ use crate::{
 #[derive(Debug)]
 pub enum SessionEvent {
     // user input
-    UserInput{bytes: Bytes},
-    // user commands 
+    UserInput { bytes: Bytes },
+    // user commands
     //  - client id not needed anymore because session controls active window and
     //    window controls active pane which should be sufficient)
     UserConnection,
-    UserSplitPane, 
+    UserSplitPane,
     UserKillPane,
 
     // output
-    WindowOutput{bytes: Bytes},
+    WindowOutput { bytes: Bytes },
     Kill,
 }
 use SessionEvent::*;
@@ -60,7 +60,7 @@ impl Session {
                 loop {
                     if let Some(event) = self.rx.recv().await {
                         match event {
-                            UserInput{bytes} => {
+                            UserInput { bytes } => {
                                 trace!("Session: UserInput");
                                 self.handle_user_input(bytes).await.unwrap();
                             }
@@ -76,7 +76,7 @@ impl Session {
                                 trace!("Session: UserKillPane");
                                 todo!()
                             }
-                            WindowOutput{bytes} => {
+                            WindowOutput { bytes } => {
                                 trace!("Session: WindowOutput");
                                 self.handle_window_output(bytes).await.unwrap();
                             }
@@ -119,4 +119,5 @@ impl SessionHandle {
     handle_method!(send_user_split_pane, UserSplitPane);
     handle_method!(send_user_kill_pane, UserKillPane);
     handle_method!(send_new_connection, UserConnection);
-    handle_method!(kill, Kill);}
+    handle_method!(kill, Kill);
+}

@@ -24,7 +24,7 @@ use crate::{actors::pane::PaneHandle, prelude::*};
 #[derive(Debug, Clone)]
 pub enum PtyEvent {
     Kill,
-    Input{bytes: Bytes},
+    Input { bytes: Bytes },
 }
 use PtyEvent::*;
 
@@ -177,7 +177,8 @@ pub struct PtyHandle {
 }
 impl PtyHandle {
     handle_method!(send, Input, bytes: Bytes);
-    handle_method!(kill, Kill);}
+    handle_method!(kill, Kill);
+}
 
 fn set_fd_nonblocking(owned_fd: &OwnedFd) -> Result<()> {
     let fd = owned_fd.as_raw_fd();
