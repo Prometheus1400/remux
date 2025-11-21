@@ -5,12 +5,28 @@ use tokio::{
     sync::mpsc,
 };
 
-use crate::{actors::session_manager::SessionManagerHandle, prelude::*};
+use crate::{
+    actors::session_manager::SessionManagerHandle,
+    control_signals::CLEAR,
+    input_parser::{self, InputParser},
+    prelude::*,
+};
 
+#[allow(unused)]
 pub enum ClientEvent {
-    AttachToSession(u32),
-    FailedAttachToSession,
-    SessionOutput(Bytes),
+    AttachToSession { session_id: u32 },
+    SuccessAttachToSession { session_id: u32 },
+    FailedAttachToSession { session_id: u32 },
+    DetachFromSession { session_id: u32 },
+    SessionOutput { bytes: Bytes },
+}
+use ClientEvent::*;
+
+#[allow(unused)]
+enum ClientState {
+    Unattached,
+    Attaching(u32),
+    Attached(u32),
 }
 
 pub struct Client {
@@ -19,6 +35,8 @@ pub struct Client {
     handle: ClientHandle,
     rx: mpsc::Receiver<ClientEvent>,
     session_manager_handle: SessionManagerHandle,
+    state: ClientState,
+    input_parser: InputParser,
 }
 impl Client {
     pub fn spawn(
@@ -38,6 +56,8 @@ impl Client {
             handle,
             rx,
             session_manager_handle,
+            state: ClientState::Unattached,
+            input_parser: InputParser::new(),
         }
     }
     fn run(mut self) -> crate::error::Result<ClientHandle> {
@@ -50,23 +70,36 @@ impl Client {
                 loop {
                     tokio::select! {
                         Some(event) = self.rx.recv() => {
-                            use ClientEvent::*;
                             match event {
-                                AttachToSession(session_id) => {
+                                AttachToSession{session_id} => {
                                     trace!("Client: AttachToSession");
-                                    self.session_manager_handle.connect_client(self.id, handle.clone(), session_id).await.unwrap();
+                                    self.session_manager_handle.connect_client(self.id, handle.clone(), session_id, true).await.unwrap();
+                                    self.state = ClientState::Attaching(session_id);
                                 }
-                                SessionOutput(bytes) => {
+                                SuccessAttachToSession{session_id} => {
+                                    trace!("Client: SuccessAttachToSession");
+                                    self.state = ClientState::Attached(session_id);
+                                }
+                                FailedAttachToSession{..} => {
+                                    trace!("Client: FailedAttachToSession");
+                                    self.state = ClientState::Unattached;
+                                    todo!();
+                                }
+                                DetachFromSession{..} => {
+                                    // for now if a client is detached from the session lets just
+                                    // kill it
+                                    trace!("Client: DetachFromSession");
+                                    self.state = ClientState::Unattached;
+                                    self.stream.write_all(CLEAR).await.unwrap();
+                                    break;
+                                }
+                                SessionOutput{bytes} => {
                                     trace!("Client: SessionOutput");
                                     self.stream.write_all(&bytes).await.unwrap();
                                 },
-                                FailedAttachToSession => {
-                                    trace!("Client: FailedAttachToSession");
-                                    todo!();
-                                }
                             }
                         },
-                        Ok(n) = self.stream.read(&mut buf) => {
+                        Ok(n) = self.stream.read(&mut buf), if matches!(self.state, ClientState::Attached(_)) => {
                             match n {
                                 0 => {
                                     // client disconnected
@@ -74,7 +107,24 @@ impl Client {
                                     break;
                                 },
                                 _ => {
-                                    self.session_manager_handle.client_send_user_input(self.id, Bytes::copy_from_slice(&buf[..n])).await.unwrap();
+                                    // TODO: need some kind of parsing for control signals
+                                    let input = &buf[..n];
+                                    for event in self.input_parser.process(input) {
+                                        match event {
+                                            input_parser::ParsedEvents::Raw(bytes) => {
+                                                debug!("Client Event Input: raw({bytes:?})");
+                                                self.session_manager_handle.client_send_user_input(self.id, bytes).await.unwrap();
+                                            },
+                                            input_parser::ParsedEvents::KillPane => {
+                                                debug!("Client Event Input: kill pane");
+                                                self.session_manager_handle.client_send_kill_pane(self.id).await.unwrap();
+                                            },
+                                            input_parser::ParsedEvents::SplitPane => {
+                                                debug!("Client Event Input: split pane");
+                                                self.session_manager_handle.client_send_split_pane(self.id).await.unwrap();
+                                            },
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -93,20 +143,11 @@ pub struct ClientHandle {
 }
 #[allow(unused)]
 impl ClientHandle {
-    pub async fn send_output(&mut self, bytes: Bytes) -> Result<()> {
-        Ok(self.tx.send(ClientEvent::SessionOutput(bytes)).await?)
-    }
-
-    pub async fn request_session_attach(&mut self, session_id: u32) -> Result<()> {
-        Ok(self
-            .tx
-            .send(ClientEvent::AttachToSession(session_id))
-            .await?)
-    }
-
-    pub async fn notify_attach_failed(&mut self) -> Result<()> {
-        Ok(self.tx.send(ClientEvent::FailedAttachToSession).await?)
-    }
+    // Tuple variants
+    handle_method!(send_output, SessionOutput, bytes: Bytes);
+    handle_method!(request_session_attach, AttachToSession, session_id: u32);
+    handle_method!(notify_attach_failed, FailedAttachToSession, session_id: u32);
+    handle_method!(notify_attach_succeeded, SuccessAttachToSession, session_id: u32);
 
     async fn kill(&self) -> crate::error::Result<()> {
         todo!()

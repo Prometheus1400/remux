@@ -14,6 +14,7 @@ use crate::{
 
 #[allow(unused)]
 pub enum SessionManagerEvent {
+    // client -> session manager events
     ClientConnect {
         client_id: u32,
         client_handle: ClientHandle,
@@ -23,15 +24,26 @@ pub enum SessionManagerEvent {
     ClientDisconnect {
         client_id: u32,
     },
-    ClientSendUserInput {
+
+    // client -> session events
+    UserInput {
         client_id: u32,
         bytes: Bytes,
     },
+    UserSplitPane {
+        client_id: u32,
+    },
+    UserKillPane {
+        client_id: u32,
+    },
+
+    // session -> client events
     SessionSendOutput {
         session_id: u32,
         bytes: Bytes,
     },
 }
+use SessionManagerEvent::*;
 
 pub struct SessionManager {
     handle: SessionManagerHandle,
@@ -66,7 +78,6 @@ impl SessionManager {
             async move {
                 loop {
                     if let Some(event) = self.rx.recv().await {
-                        use SessionManagerEvent::*;
                         match event {
                             ClientConnect {
                                 client_id,
@@ -84,21 +95,29 @@ impl SessionManager {
                                 .await
                                 .unwrap();
                             }
-                            ClientSendUserInput { client_id, bytes } => {
-                                trace!("SessionManager: ClientSendUserInput");
+                            ClientDisconnect { client_id } => {
+                                trace!("SessionManager: ClientDisconnect");
+                                self.handle_client_disconnect(client_id).await.unwrap();
+                            }
+                            UserInput { client_id, bytes } => {
+                                trace!("SessionManager: UserInput");
                                 self.handle_client_send_user_input(client_id, bytes)
                                     .await
                                     .unwrap();
+                            }
+                            UserSplitPane { client_id } => {
+                                trace!("SessionManager: UserSplitPane");
+                                self.handle_client_split_pane(client_id).await.unwrap();
+                            }
+                            UserKillPane { client_id } => {
+                                trace!("SessionManager: UserKillPane");
+                                self.handle_client_kill_pane(client_id).await.unwrap();
                             }
                             SessionSendOutput { session_id, bytes } => {
                                 trace!("SessionManager: SessionSendOutput");
                                 self.handle_session_send_output(session_id, bytes)
                                     .await
                                     .unwrap();
-                            }
-                            ClientDisconnect { client_id } => {
-                                trace!("SessionManager: ClientDisconnect");
-                                self.handle_client_disconnect(client_id).await.unwrap();
                             }
                         }
                     }
@@ -122,11 +141,11 @@ impl SessionManager {
                 let new_session = Session::spawn(session_id, self.handle.clone()).unwrap();
                 self.sessions.insert(session_id, new_session);
             } else {
-                client_handle.notify_attach_failed().await?;
+                client_handle.notify_attach_failed(session_id).await?;
             }
         }
         // session exists
-        self.clients.insert(client_id, client_handle);
+        self.clients.insert(client_id, client_handle.clone());
         let clients = self
             .session_to_client_mapping
             .entry(session_id)
@@ -138,6 +157,7 @@ impl SessionManager {
             .sessions
             .get_mut(&session_id)
             .expect("session should exist here");
+        client_handle.notify_attach_succeeded(session_id).await?;
         session_handle.send_new_connection().await
     }
     async fn handle_client_disconnect(&mut self, client_id: u32) -> Result<()> {
@@ -157,6 +177,23 @@ impl SessionManager {
             Ok(())
         }
     }
+    async fn handle_client_kill_pane(&mut self, client_id: u32) -> Result<()> {
+        if let Some(session_id) = self.client_to_session_mapping.get(&client_id) {
+            let session_handle = self.sessions.get_mut(session_id).unwrap();
+            session_handle.send_user_kill_pane().await
+        } else {
+            Ok(())
+        }
+    }
+    async fn handle_client_split_pane(&mut self, client_id: u32) -> Result<()> {
+        if let Some(session_id) = self.client_to_session_mapping.get(&client_id) {
+            let session_handle = self.sessions.get_mut(session_id).unwrap();
+            session_handle.send_user_split_pane().await
+        } else {
+            // TODO: should error
+            Ok(())
+        }
+    }
     async fn handle_session_send_output(&mut self, session_id: u32, bytes: Bytes) -> Result<()> {
         for client_id in self.session_to_client_mapping.get(&session_id).unwrap() {
             let client_handle = self.clients.get_mut(client_id).unwrap();
@@ -172,38 +209,13 @@ pub struct SessionManagerHandle {
 }
 // TODO: seperate handle for clients and sessions
 impl SessionManagerHandle {
-    pub async fn connect_client(
-        &self,
-        client_id: u32,
-        client_handle: ClientHandle,
-        session_id: u32,
-    ) -> Result<()> {
-        Ok(self
-            .tx
-            .send(SessionManagerEvent::ClientConnect {
-                client_id,
-                client_handle,
-                session_id,
-                create_session: true,
-            })
-            .await?)
-    }
-    pub async fn disconnect_client(&self, client_id: u32) -> Result<()> {
-        Ok(self
-            .tx
-            .send(SessionManagerEvent::ClientDisconnect { client_id })
-            .await?)
-    }
-    pub async fn client_send_user_input(&self, client_id: u32, bytes: Bytes) -> Result<()> {
-        Ok(self
-            .tx
-            .send(SessionManagerEvent::ClientSendUserInput { client_id, bytes })
-            .await?)
-    }
-    pub async fn session_send_output(&self, session_id: u32, bytes: Bytes) -> Result<()> {
-        Ok(self
-            .tx
-            .send(SessionManagerEvent::SessionSendOutput { session_id, bytes })
-            .await?)
-    }
+    // Client -> SessionManager events
+    handle_method!(connect_client, ClientConnect, client_id: u32, client_handle: ClientHandle, session_id: u32, create_session: bool);
+    handle_method!(disconnect_client, ClientDisconnect, client_id: u32);
+    // Client -> Session events
+    handle_method!(client_send_user_input, UserInput, client_id: u32, bytes: Bytes);
+    handle_method!(client_send_kill_pane, UserKillPane, client_id: u32);
+    handle_method!(client_send_split_pane, UserSplitPane, client_id: u32);
+    // Session -> Client events
+    handle_method!(session_send_output, SessionSendOutput, session_id: u32, bytes: Bytes);
 }
