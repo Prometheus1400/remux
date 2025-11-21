@@ -4,6 +4,7 @@ mod daemon;
 mod error;
 mod prelude;
 mod input_parser;
+mod macros;
 
 use daemon::RemuxDaemon;
 use tracing_subscriber::FmtSubscriber;

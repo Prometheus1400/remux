@@ -11,11 +11,13 @@ use crate::{
 
 #[derive(Debug)]
 pub enum WindowEvent {
-    UserInput(Bytes),  // input from user
-    PaneOutput(Bytes), // output from pane
+    UserInput{ bytes: Bytes },  // input from user
+    PaneOutput{ bytes: Bytes }, // output from pane
     Redraw,
     Kill,
 }
+use WindowEvent::*;
+
 #[allow(unused)]
 #[derive(Debug)]
 pub enum WindowState {
@@ -67,11 +69,11 @@ impl Window {
                     if let Some(event) = self.rx.recv().await {
                         use WindowEvent::*;
                         match event {
-                            UserInput(bytes) => {
+                            UserInput{bytes} => {
                                 trace!("Window: UserInput");
                                 self.handle_user_input(bytes).await.unwrap();
                             }
-                            PaneOutput(bytes) => {
+                            PaneOutput{bytes} => {
                                 trace!("Window: PaneOutput");
                                 self.handle_pane_output(bytes).await.unwrap();
                             }
@@ -98,16 +100,7 @@ pub struct WindowHandle {
     tx: mpsc::Sender<WindowEvent>,
 }
 impl WindowHandle {
-    pub async fn send_pane_output(&self, bytes: Bytes) -> Result<()> {
-        Ok(self.tx.send(WindowEvent::PaneOutput(bytes)).await?)
-    }
-    pub async fn send_user_input(&self, bytes: Bytes) -> Result<()> {
-        Ok(self.tx.send(WindowEvent::UserInput(bytes)).await?)
-    }
-    pub async fn redraw(&self) -> Result<()> {
-        Ok(self.tx.send(WindowEvent::Redraw).await?)
-    }
-    pub async fn kill(&self) -> Result<()> {
-        Ok(self.tx.send(WindowEvent::Kill).await?)
-    }
-}
+    handle_method!(send_pane_output, PaneOutput, bytes: Bytes);
+    handle_method!(send_user_input, UserInput, bytes: Bytes);
+    handle_method!(redraw, Redraw);
+    handle_method!(kill, Kill);}

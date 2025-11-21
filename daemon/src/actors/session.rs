@@ -14,7 +14,7 @@ use crate::{
 #[derive(Debug)]
 pub enum SessionEvent {
     // user input
-    UserInput(Bytes),
+    UserInput{bytes: Bytes},
     // user commands 
     //  - client id not needed anymore because session controls active window and
     //    window controls active pane which should be sufficient)
@@ -23,9 +23,10 @@ pub enum SessionEvent {
     UserKillPane,
 
     // output
-    WindowOutput(Bytes),
+    WindowOutput{bytes: Bytes},
     Kill,
 }
+use SessionEvent::*;
 
 pub struct Session {
     id: u32,
@@ -58,9 +59,8 @@ impl Session {
             async move {
                 loop {
                     if let Some(event) = self.rx.recv().await {
-                        use SessionEvent::*;
                         match event {
-                            UserInput(bytes) => {
+                            UserInput{bytes} => {
                                 trace!("Session: UserInput");
                                 self.handle_user_input(bytes).await.unwrap();
                             }
@@ -76,7 +76,7 @@ impl Session {
                                 trace!("Session: UserKillPane");
                                 todo!()
                             }
-                            WindowOutput(bytes) => {
+                            WindowOutput{bytes} => {
                                 trace!("Session: WindowOutput");
                                 self.handle_window_output(bytes).await.unwrap();
                             }
@@ -114,22 +114,9 @@ pub struct SessionHandle {
 }
 #[allow(unused)]
 impl SessionHandle {
-    pub async fn send_user_input(&mut self, bytes: Bytes) -> Result<()> {
-        Ok(self.tx.send(SessionEvent::UserInput(bytes)).await?)
-    }
-    pub async fn send_user_split_pane(&mut self) -> Result<()> {
-        Ok(self.tx.send(SessionEvent::UserSplitPane).await?)
-    }
-    pub async fn send_user_kill_pane(&mut self) -> Result<()> {
-        Ok(self.tx.send(SessionEvent::UserKillPane).await?)
-    }
-    pub async fn send_window_output(&mut self, bytes: Bytes) -> Result<()> {
-        Ok(self.tx.send(SessionEvent::WindowOutput(bytes)).await?)
-    }
-    pub async fn send_new_connection(&mut self) -> Result<()> {
-        Ok(self.tx.send(SessionEvent::UserConnection).await?)
-    }
-    pub async fn kill(&self) -> Result<()> {
-        Ok(self.tx.send(SessionEvent::Kill).await?)
-    }
-}
+    handle_method!(send_user_input, UserInput, bytes: Bytes);
+    handle_method!(send_window_output, WindowOutput, bytes: Bytes);
+    handle_method!(send_user_split_pane, UserSplitPane);
+    handle_method!(send_user_kill_pane, UserKillPane);
+    handle_method!(send_new_connection, UserConnection);
+    handle_method!(kill, Kill);}

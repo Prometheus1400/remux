@@ -11,8 +11,8 @@ use crate::{
 };
 
 pub enum PaneEvent {
-    UserInput(Bytes),
-    PtyOutput(Bytes),
+    UserInput{bytes: Bytes},
+    PtyOutput{bytes: Bytes},
     PtyDied,
     Render, // uses the diff from prev state to get to desired state (falls back to rerender if no prev state)
     Rerender, // full rerender
@@ -20,6 +20,7 @@ pub enum PaneEvent {
     Reveal,
     Kill,
 }
+use PaneEvent::*;
 
 pub enum PaneState {
     Visible,
@@ -62,13 +63,12 @@ impl Pane {
             async move {
                 loop {
                     if let Some(event) = self.rx.recv().await {
-                        use PaneEvent::*;
                         match event {
-                            UserInput(bytes) => {
+                            UserInput{bytes} => {
                                 trace!("Pane: UserInput");
                                 self.handle_input(bytes).await.unwrap();
                             }
-                            PtyOutput(bytes) => {
+                            PtyOutput{bytes} => {
                                 trace!("Pane: PtyOutput");
                                 self.handle_pty_output(bytes).await.unwrap();
                             }
@@ -156,29 +156,12 @@ pub struct PaneHandle {
 #[allow(unused)]
 impl PaneHandle {
     // public api
-    pub async fn send_user_input(&self, bytes: Bytes) -> Result<()> {
-        Ok(self.tx.send(PaneEvent::UserInput(bytes)).await?)
-    }
-    pub async fn send_output_from_pty(&self, bytes: Bytes) -> Result<()> {
-        Ok(self.tx.send(PaneEvent::PtyOutput(bytes)).await?)
-    }
-    pub async fn request_rerender(&self) -> Result<()> {
-        Ok(self.tx.send(PaneEvent::Rerender).await?)
-    }
-    pub async fn notify_pty_died(&self) -> Result<()> {
-        Ok(self.tx.send(PaneEvent::PtyDied).await?)
-    }
-    pub async fn hide(&self) -> Result<()> {
-        Ok(self.tx.send(PaneEvent::Hide).await?)
-    }
-    pub async fn reveal(&self) -> Result<()> {
-        Ok(self.tx.send(PaneEvent::Reveal).await?)
-    }
-    pub async fn kill(&self) -> Result<()> {
-        Ok(self.tx.send(PaneEvent::Kill).await?)
-    }
-    // for internal use only
-    async fn request_render(&self) -> Result<()> {
-        Ok(self.tx.send(PaneEvent::Render).await?)
-    }
-}
+    handle_method!(send_user_input, UserInput, bytes: Bytes);
+    handle_method!(send_output_from_pty, PtyOutput, bytes: Bytes);
+    handle_method!(request_rerender, Rerender);
+    handle_method!(notify_pty_died, PtyDied);
+    handle_method!(hide, Hide);
+    handle_method!(reveal, Reveal);
+    handle_method!(kill, Kill);
+    // internal
+    handle_method!(request_render, Render);}

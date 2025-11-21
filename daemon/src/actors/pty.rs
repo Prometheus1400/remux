@@ -24,8 +24,9 @@ use crate::{actors::pane::PaneHandle, prelude::*};
 #[derive(Debug, Clone)]
 pub enum PtyEvent {
     Kill,
-    Input(Bytes),
+    Input{bytes: Bytes},
 }
+use PtyEvent::*;
 
 pub struct Pty {
     // used for sending events to the actor
@@ -115,12 +116,12 @@ impl Pty {
                                 // event handler
                                 Some(event) = self.rx.recv() => {
                                     let res = match event.clone() {
-                                        PtyEvent::Kill => {
+                                        Kill => {
                                             trace!("Pty: Kill");
                                             Self::handle_kill(child)?;
                                             break;
                                         }
-                                        PtyEvent::Input(bytes) => {
+                                        Input{bytes} => {
                                             trace!("Pty: Input");
                                             self.handle_input(bytes.clone())
                                         },
@@ -175,13 +176,8 @@ pub struct PtyHandle {
     tx: mpsc::Sender<PtyEvent>,
 }
 impl PtyHandle {
-    pub async fn send(&self, bytes: Bytes) -> Result<()> {
-        Ok(self.tx.send(PtyEvent::Input(bytes)).await?)
-    }
-    pub async fn kill(&self) -> Result<()> {
-        Ok(self.tx.send(PtyEvent::Kill).await?)
-    }
-}
+    handle_method!(send, Input, bytes: Bytes);
+    handle_method!(kill, Kill);}
 
 fn set_fd_nonblocking(owned_fd: &OwnedFd) -> Result<()> {
     let fd = owned_fd.as_raw_fd();
