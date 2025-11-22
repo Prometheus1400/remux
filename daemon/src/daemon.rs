@@ -3,13 +3,13 @@ use std::fs::{File, remove_file};
 use remux_core::{
     communication,
     daemon_utils::{get_sock_path, lock_daemon_file},
-    messages::{self, RequestBody},
+    messages::RequestBody,
 };
 use tokio::net::{UnixListener, UnixStream};
 
 use crate::{
     actors::{
-        client::Client,
+        client::ClientConnection,
         session_manager::{SessionManager, SessionManagerHandle},
     },
     error::Result,
@@ -43,8 +43,8 @@ impl RemuxDaemon {
         info!("unix socket path: {:?}", socket_path);
         let listener = UnixListener::bind(socket_path)?;
         loop {
-            let (stream, addr) = listener.accept().await?;
-            info!("accepting connection from: {:?}", addr.as_pathname());
+            let (stream, _) = listener.accept().await?;
+            info!("accepting connection");
             if let Err(e) = handle_communication(self.session_manager_handle.clone(), stream).await
             {
                 error!("{e}");
@@ -53,7 +53,7 @@ impl RemuxDaemon {
     }
 }
 
-#[instrument(skip(stream))]
+#[instrument(skip(session_manager_handle, stream))]
 async fn handle_communication(
     session_manager_handle: SessionManagerHandle,
     mut stream: UnixStream,
@@ -62,7 +62,7 @@ async fn handle_communication(
     match req.body {
         RequestBody::Attach { session_id } => {
             debug!("running new client actor");
-            let client = Client::spawn(stream, session_manager_handle).unwrap();
+            let client = ClientConnection::spawn(stream, session_manager_handle).unwrap();
             client.request_session_attach(session_id).await.unwrap();
         }
         RequestBody::SessionsList => {

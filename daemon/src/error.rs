@@ -2,7 +2,7 @@ use thiserror::Error;
 use tokio::sync::mpsc::error::SendError;
 
 use crate::actors::{
-    client::ClientEvent, pane::PaneEvent, pty::PtyEvent, session::SessionEvent,
+    client::ClientConnectionEvent, pane::PaneEvent, pty::PtyEvent, session::SessionEvent,
     session_manager::SessionManagerEvent, window::WindowEvent,
 };
 
@@ -44,7 +44,7 @@ pub enum Error {
 #[derive(Error, Debug)]
 pub enum EventSendError {
     #[error("Client send error: {0}")]
-    Client(SendError<ClientEvent>),
+    Client(SendError<ClientConnectionEvent>),
     #[error("Session Manager send error: {0}")]
     SessionManager(SendError<SessionManagerEvent>),
     #[error("Session send error: {0}")]
@@ -57,8 +57,8 @@ pub enum EventSendError {
     Pty(SendError<PtyEvent>),
 }
 
-impl From<SendError<ClientEvent>> for Error {
-    fn from(e: SendError<ClientEvent>) -> Self {
+impl From<SendError<ClientConnectionEvent>> for Error {
+    fn from(e: SendError<ClientConnectionEvent>) -> Self {
         Self::EventSend(EventSendError::Client(e))
     }
 }

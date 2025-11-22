@@ -1,5 +1,6 @@
 use bytes::Bytes;
 use tokio::sync::mpsc;
+use tracing::Instrument;
 
 use crate::{
     actors::{
@@ -21,6 +22,7 @@ pub enum SessionEvent {
     UserConnection,
     UserSplitPane,
     UserKillPane,
+    Redraw,
 
     // output
     WindowOutput { bytes: Bytes },
@@ -36,10 +38,12 @@ pub struct Session {
     window_handle: WindowHandle,
 }
 impl Session {
+    #[instrument(skip(session_manager_handle), fields(session_id, id))]
     pub fn spawn(id: u32, session_manager_handle: SessionManagerHandle) -> Result<SessionHandle> {
         let session = Session::new(id, session_manager_handle);
         session.run()
     }
+    #[instrument(skip(session_manager_handle), fields(session_id = id))]
     fn new(id: u32, session_manager_handle: SessionManagerHandle) -> Self {
         let (tx, rx) = mpsc::channel(10);
         let handle = SessionHandle { tx };
@@ -52,7 +56,9 @@ impl Session {
             window_handle,
         }
     }
+    #[instrument(skip(self), fields(session_id = self.id))]
     fn run(mut self) -> Result<SessionHandle> {
+        let span = tracing::Span::current();
         let handle_clone = self.handle.clone();
 
         let _task = tokio::spawn({
@@ -65,30 +71,33 @@ impl Session {
                                 self.handle_user_input(bytes).await.unwrap();
                             }
                             UserConnection => {
-                                trace!("Session: UserConnection");
+                                debug!("Session: UserConnection");
                                 self.handle_new_connection().await.unwrap();
                             }
                             UserSplitPane => {
-                                trace!("Session: UserSplitPane");
+                                debug!("Session: UserSplitPane");
                                 todo!()
                             }
                             UserKillPane => {
-                                trace!("Session: UserKillPane");
+                                debug!("Session: UserKillPane");
                                 todo!()
                             }
                             WindowOutput { bytes } => {
                                 trace!("Session: WindowOutput");
                                 self.handle_window_output(bytes).await.unwrap();
                             }
+                            Redraw => {
+                                self.window_handle.redraw().await.unwrap();
+                            }
                             Kill => {
-                                trace!("Session: Kill");
+                                debug!("Session: Kill");
                                 self.window_handle.kill().await.unwrap();
                                 break;
                             }
                         }
                     }
                 }
-            }
+            }.instrument(span)
         });
 
         Ok(handle_clone)
@@ -119,5 +128,6 @@ impl SessionHandle {
     handle_method!(send_user_split_pane, UserSplitPane);
     handle_method!(send_user_kill_pane, UserKillPane);
     handle_method!(send_new_connection, UserConnection);
+    handle_method!(redraw, Redraw);
     handle_method!(kill, Kill);
 }

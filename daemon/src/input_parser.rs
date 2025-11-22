@@ -1,5 +1,4 @@
 use bytes::Bytes;
-use remux_core::events;
 
 use crate::prelude::*;
 
@@ -29,13 +28,12 @@ impl InputParser {
         self.buf.extend(input);
 
         let mut events = vec![];
-        let mut p = 0;
         let mut i = 0;
         while i < self.buf.len() {
             let b = self.buf[i];
             match b {
                 CTRL_B => {
-                    debug!("prefix detected");
+                    trace!("prefix detected");
                     if (i + 1) < self.buf.len() {
                         let b_next = self.buf[i + 1];
                         if i > 0 {
@@ -66,9 +64,7 @@ impl InputParser {
                         if !old.is_empty() {
                             events.push(ParsedEvents::Raw(Bytes::from(old)));
                         }
-                        // i == 0;
                         break;
-                        // return events;
                     }
                 }
                 _ => i += 1,
@@ -79,7 +75,7 @@ impl InputParser {
         if !old.is_empty() {
             events.push(ParsedEvents::Raw(Bytes::from(old)));
         }
-        debug!("return from process with remaining {:?}", self.buf);
+        trace!("return from process with remaining {:?}", self.buf);
         events
     }
 }

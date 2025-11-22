@@ -4,6 +4,7 @@ use std::{
     ops::Index,
 };
 
+use bytes::Bytes;
 use crossterm::{
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen},
@@ -14,7 +15,8 @@ use ratatui::{
     style::{Style, Stylize},
     widgets::{List, ListItem},
 };
-use tokio::sync::mpsc;
+use serde::de;
+use tokio::sync::mpsc::{self, Receiver};
 use tracing::debug;
 
 use crate::{actors::io::IOHandle, prelude::*, widgets};
@@ -32,17 +34,19 @@ pub struct Popup {
     rx: mpsc::Receiver<PopupEvent>,
     io_handle: IOHandle,
     terminal: Terminal<CrosstermBackend<Stdout>>,
+    stdin_rx: mpsc::Receiver<Bytes>,
 }
 impl Popup {
-    pub fn spawn(io_handle: IOHandle) -> Result<PopupHandle> {
-        Popup::new(io_handle).run()
+    pub fn spawn(stdin_rx: mpsc::Receiver<Bytes>, io_handle: IOHandle) -> Result<PopupHandle> {
+        Popup::new(stdin_rx, io_handle).run()
     }
 
-    fn new(io_handle: IOHandle) -> Self {
+    fn new(stdin_rx: mpsc::Receiver<Bytes>, io_handle: IOHandle) -> Self {
         let (tx, rx) = mpsc::channel(10);
         let handle = PopupHandle { tx };
         let terminal = Terminal::new(CrosstermBackend::new(stdout())).unwrap();
         Self {
+            stdin_rx,
             handle,
             rx,
             io_handle,
@@ -76,7 +80,7 @@ impl Popup {
     async fn handle_select_session(&mut self, session_ids: Vec<u32>) -> Result<()> {
         let session_id_strs: Vec<String> = session_ids.iter().map(|i| i.to_string()).collect();
         if let Some(index) =
-            widgets::selector::selector_widget(&mut self.terminal, &session_id_strs).await
+            widgets::selector::selector_widget(&mut self.terminal, &mut self.stdin_rx, &session_id_strs).await
         {
             self.io_handle
                 .send_switch_session(session_ids.get(index).copied())

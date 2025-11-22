@@ -776,6 +776,7 @@ dependencies = [
  "ratatui",
  "remux-core",
  "serde",
+ "terminput",
  "thiserror 2.0.17",
  "tokio",
  "tracing",
@@ -1000,6 +1001,15 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-ident",
+]
+
+[[package]]
+name = "terminput"
+version = "0.5.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "86a8a2c741a146c297baff16b315401ab7ec4b4817eff783606e89734242408a"
+dependencies = [
+ "bitflags",
 ]
 
 [[package]]

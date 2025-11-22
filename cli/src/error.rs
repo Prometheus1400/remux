@@ -2,7 +2,7 @@ use remux_core::messages::RequestMessage;
 use thiserror::Error;
 use tokio::sync::mpsc::error::SendError;
 
-use crate::actors::{io::IOEvent, popup::PopupEvent};
+use crate::actors::{io::ClientEvent, popup::PopupEvent};
 
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -50,13 +50,13 @@ pub enum Error {
 #[derive(Error, Debug)]
 pub enum EventSendError {
     #[error("IO send error: {0}")]
-    IO(SendError<IOEvent>),
+    IO(SendError<ClientEvent>),
     #[error("Popup send error: {0}")]
     Popup(SendError<PopupEvent>),
 }
 
-impl From<SendError<IOEvent>> for Error {
-    fn from(e: SendError<IOEvent>) -> Self {
+impl From<SendError<ClientEvent>> for Error {
+    fn from(e: SendError<ClientEvent>) -> Self {
         Self::EventSend(EventSendError::IO(e))
     }
 }

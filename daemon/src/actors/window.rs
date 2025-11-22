@@ -1,5 +1,6 @@
 use bytes::Bytes;
 use tokio::sync::mpsc;
+use tracing::Instrument;
 
 use crate::{
     actors::{
@@ -45,10 +46,12 @@ impl Window {
     }
 }
 impl Window {
+    #[instrument(skip(session_handle))]
     pub fn spawn(session_handle: SessionHandle) -> Result<WindowHandle> {
         let window = Window::new(session_handle)?;
         window.run()
     }
+    #[instrument(skip(session_handle))]
     fn new(session_handle: SessionHandle) -> Result<Self> {
         let (tx, rx) = mpsc::channel(10);
         let handle = WindowHandle { tx };
@@ -61,7 +64,9 @@ impl Window {
             window_state: WindowState::Focused,
         })
     }
+    #[instrument(skip(self))]
     fn run(mut self) -> crate::error::Result<WindowHandle> {
+        let span = tracing::Span::current();
         let handle_clone = self.handle.clone();
         let _task = tokio::spawn({
             async move {
@@ -77,18 +82,18 @@ impl Window {
                                 self.handle_pane_output(bytes).await.unwrap();
                             }
                             Redraw => {
-                                trace!("Window: Redraw");
+                                debug!("Window: Redraw");
                                 self.handle_redraw().await.unwrap();
                             }
                             Kill => {
-                                trace!("Window: Kill");
+                                debug!("Window: Kill");
                                 self.pane_handle.kill().await.unwrap();
                                 break;
                             }
                         }
                     }
                 }
-            }
+            }.instrument(span)
         });
 
         Ok(handle_clone)

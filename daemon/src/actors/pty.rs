@@ -18,6 +18,7 @@ use nix::{
     unistd::{self, Pid, execvp},
 };
 use tokio::{io::unix::AsyncFd, sync::mpsc};
+use tracing::Instrument;
 
 use crate::{actors::pane::PaneHandle, prelude::*};
 
@@ -38,11 +39,13 @@ pub struct Pty {
     pane_handle: PaneHandle,
 }
 impl Pty {
+    #[instrument(skip(pane_handle))]
     pub fn spawn(pane_handle: PaneHandle) -> Result<PtyHandle> {
         let pty = Pty::new(pane_handle);
         pty.run()
     }
 
+    #[instrument(skip(pane_handle))]
     fn new(pane_handle: PaneHandle) -> Self {
         let (tx, rx) = mpsc::channel::<PtyEvent>(10);
         let (pty_tx, pty_rx) = mpsc::unbounded_channel::<Bytes>();
@@ -55,7 +58,9 @@ impl Pty {
         }
     }
 
+    #[instrument(skip(self))]
     fn run(mut self) -> Result<PtyHandle> {
+        let span = tracing::Span::current();
         debug!("forking and spawning child PTY process");
         let fork_result = unsafe { forkpty(None, None)? };
 
@@ -79,6 +84,7 @@ impl Pty {
                                     let mut buf = [0u8; 1024];
                                     match guard.try_io(|fd| unistd::read(fd.get_ref(), &mut buf).map_err(|e| e.into())) {
                                         Ok(Ok(n)) if n > 0 => {
+                                            trace!("Pty: read {n} bytes from fd");
                                             self.pane_handle.send_output_from_pty(Bytes::copy_from_slice(&buf[..n])).await.unwrap();
                                         },
                                         Ok(Ok(_)) => {
@@ -117,12 +123,12 @@ impl Pty {
                                 Some(event) = self.rx.recv() => {
                                     let res = match event.clone() {
                                         Kill => {
-                                            trace!("Pty: Kill");
+                                            debug!("Pty: Kill");
                                             Self::handle_kill(child)?;
                                             break;
                                         }
                                         Input{bytes} => {
-                                            trace!("Pty: Input");
+                                            trace!("Pty: Input({bytes:?}");
                                             self.handle_input(bytes.clone())
                                         },
                                     };
@@ -150,7 +156,7 @@ impl Pty {
                         debug!("stopping PtyProcess run");
                         self.pane_handle.notify_pty_died().await.unwrap();
                         Ok(())
-                    }
+                    }.instrument(span)
                 });
 
                 Ok(handle)

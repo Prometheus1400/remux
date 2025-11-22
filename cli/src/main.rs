@@ -1,28 +1,22 @@
 mod actors;
 mod args;
 mod error;
-mod prelude;
 mod widgets;
+mod prelude;
 
 use clap::Parser;
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use remux_core::{
-    communication,
-    daemon_utils::get_sock_path,
-    events::CliEvent,
-    messages::{self, RequestMessage, ResponseBody, ResponseMessage},
+    communication, daemon_utils::get_sock_path, messages::{RequestMessage, ResponseBody, ResponseMessage},
 };
-use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    net::UnixStream,
-};
-use tracing::debug;
+use tokio::net::UnixStream;
 
 use crate::{
-    actors::io::IO,
+    actors::io::Client,
     args::{Args, Commands, SessionCommands},
     error::{Error, Result},
 };
+use crate::prelude::*;
 
 #[tokio::main]
 async fn main() {
@@ -99,8 +93,8 @@ async fn attach(mut stream: UnixStream, attach_message: RequestMessage) -> Resul
         })?;
     debug!("Sent attach request successfully");
     enable_raw_mode()?;
-    if let Ok(task) = IO::spawn(stream) {
-        task.await;
+    if let Ok(task) = Client::spawn(stream) {
+        task.await?;
     }
     disable_raw_mode()?;
     Ok(())

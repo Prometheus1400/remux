@@ -1,6 +1,7 @@
 use bytes::Bytes;
 use remux_core::{communication, events::DaemonEvent};
 use tokio::{io::AsyncWriteExt, net::UnixStream, sync::mpsc};
+use tracing::Instrument;
 
 use crate::{
     actors::session_manager::SessionManagerHandle,
@@ -10,7 +11,7 @@ use crate::{
 };
 
 #[allow(unused)]
-pub enum ClientEvent {
+pub enum ClientConnectionEvent {
     AttachToSession { session_id: u32 },
     SuccessAttachToSession { session_id: u32 },
     RespondRequestSwitchSession { session_ids: Vec<u32> },
@@ -18,35 +19,37 @@ pub enum ClientEvent {
     DetachFromSession { session_id: u32 },
     SessionOutput { bytes: Bytes },
 }
-use ClientEvent::*;
+use ClientConnectionEvent::*;
 
 #[allow(unused)]
-enum ClientState {
+enum ClientConnectionState {
     Unattached,
     Attaching(u32),
     Attached(u32),
 }
 
-pub struct Client {
+pub struct ClientConnection {
     id: u32,
     stream: UnixStream,
-    handle: ClientHandle,
-    rx: mpsc::Receiver<ClientEvent>,
+    handle: ClientConnectionHandle,
+    rx: mpsc::Receiver<ClientConnectionEvent>,
     session_manager_handle: SessionManagerHandle,
-    state: ClientState,
+    state: ClientConnectionState,
     input_parser: InputParser,
 }
-impl Client {
+impl ClientConnection {
+    #[instrument(skip(stream, session_manager_handle))]
     pub fn spawn(
         stream: UnixStream,
         session_manager_handle: SessionManagerHandle,
-    ) -> Result<ClientHandle> {
+    ) -> Result<ClientConnectionHandle> {
         let client = Self::new(stream, session_manager_handle);
         client.run()
     }
+    #[instrument(skip(stream, session_manager_handle))]
     fn new(stream: UnixStream, session_manager_handle: SessionManagerHandle) -> Self {
         let (tx, rx) = mpsc::channel(10);
-        let handle = ClientHandle { tx };
+        let handle = ClientConnectionHandle { tx };
         let id: u32 = rand::random();
         Self {
             id,
@@ -54,12 +57,13 @@ impl Client {
             handle,
             rx,
             session_manager_handle,
-            state: ClientState::Unattached,
+            state: ClientConnectionState::Unattached,
             input_parser: InputParser::new(),
         }
     }
-    fn run(mut self) -> crate::error::Result<ClientHandle> {
-        trace!("in client run");
+    #[instrument(skip(self), fields(client_id = self.id))]
+    fn run(mut self) -> crate::error::Result<ClientConnectionHandle> {
+        let span = tracing::Span::current();
         let handle_clone = self.handle.clone();
         let _task = tokio::spawn({
             async move {
@@ -70,29 +74,29 @@ impl Client {
                         Some(event) = self.rx.recv() => {
                             match event {
                                 AttachToSession{session_id} => {
-                                    trace!("Client: AttachToSession");
+                                    debug!("Client: AttachToSession");
                                     self.session_manager_handle.connect_client(self.id, handle.clone(), session_id, true).await.unwrap();
-                                    self.state = ClientState::Attaching(session_id);
+                                    self.state = ClientConnectionState::Attaching(session_id);
                                 }
                                 SuccessAttachToSession{session_id} => {
-                                    trace!("Client: SuccessAttachToSession");
-                                    self.state = ClientState::Attached(session_id);
+                                    debug!("Client: SuccessAttachToSession");
+                                    self.state = ClientConnectionState::Attached(session_id);
                                 }
                                 FailedAttachToSession{..} => {
-                                    trace!("Client: FailedAttachToSession");
-                                    self.state = ClientState::Unattached;
+                                    debug!("Client: FailedAttachToSession");
+                                    self.state = ClientConnectionState::Unattached;
                                     todo!();
                                 }
                                 DetachFromSession{..} => {
                                     // for now if a client is detached from the session lets just
                                     // kill it
-                                    trace!("Client: DetachFromSession");
-                                    self.state = ClientState::Unattached;
+                                    debug!("Client: DetachFromSession");
+                                    self.state = ClientConnectionState::Unattached;
                                     self.stream.write_all(CLEAR).await.unwrap();
                                     // break;
                                 }
                                 RespondRequestSwitchSession { session_ids } => {
-                                    trace!("Client: RespondRequestSwitchSession");
+                                    debug!("Client: RespondRequestSwitchSession");
                                     communication::send_event(&mut self.stream, DaemonEvent::SwitchSessionOptions { session_ids }).await.unwrap();
                                 }
                                 SessionOutput{bytes} => {
@@ -101,7 +105,7 @@ impl Client {
                                 }
                             }
                         },
-                        res = communication::recv_cli_event(&mut self.stream), if matches!(self.state, ClientState::Attached(_)) => {
+                        res = communication::recv_cli_event(&mut self.stream), if matches!(self.state, ClientConnectionState::Attached(_)) => {
                             match res {
                                 Ok(event) => {
                                     match event {
@@ -110,7 +114,7 @@ impl Client {
                                                 use input_parser::ParsedEvents;
                                                 match event {
                                                     ParsedEvents::Raw(bytes) => {
-                                                        debug!("Client Event Input: raw({bytes:?})");
+                                                        trace!("Client Event Input: raw({bytes:?})");
                                                         self.session_manager_handle.client_send_user_input(self.id, bytes).await.unwrap();
                                                     },
                                                     ParsedEvents::KillPane => {
@@ -130,8 +134,7 @@ impl Client {
                                         }
                                         CliEvent::SwitchSession {session_id} => {
                                             debug!("Client Event Input: SwitchSession{session_id}");
-                                            self.handle.request_session_detach(session_id).await.unwrap();
-                                            self.handle.request_session_attach(session_id).await.unwrap();
+                                            self.session_manager_handle.client_switch_session(self.id, session_id).await.unwrap();
                                         }
                                     }
                                 }
@@ -145,7 +148,7 @@ impl Client {
                         }
                     }
                 }
-            }
+            }.instrument(span)
         });
 
         Ok(handle_clone)
@@ -153,11 +156,11 @@ impl Client {
 }
 
 #[derive(Debug, Clone)]
-pub struct ClientHandle {
-    tx: mpsc::Sender<ClientEvent>,
+pub struct ClientConnectionHandle {
+    tx: mpsc::Sender<ClientConnectionEvent>,
 }
 #[allow(unused)]
-impl ClientHandle {
+impl ClientConnectionHandle {
     handle_method!(send_output, SessionOutput, bytes: Bytes);
     handle_method!(request_session_attach, AttachToSession, session_id: u32);
     handle_method!(respond_request_switch_session, RespondRequestSwitchSession, session_ids: Vec<u32>);
