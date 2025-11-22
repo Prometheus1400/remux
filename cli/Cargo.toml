@@ -17,3 +17,5 @@ bytes.workspace = true
 
 clap = { version = "4.5.51", features = ["derive"] }
 crossterm = "0.29.0"
+ratatui = { version = "0.28.1", features = ["crossterm"] }
+terminput = "0.5.11"

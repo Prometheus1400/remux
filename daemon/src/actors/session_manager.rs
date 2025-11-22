@@ -2,10 +2,11 @@ use std::{collections::HashMap, vec};
 
 use bytes::Bytes;
 use tokio::sync::mpsc;
+use tracing::Instrument;
 
 use crate::{
     actors::{
-        client::ClientHandle,
+        client_connection::ClientConnectionHandle,
         session::{Session, SessionHandle},
     },
     error::Result,
@@ -17,12 +18,19 @@ pub enum SessionManagerEvent {
     // client -> session manager events
     ClientConnect {
         client_id: u32,
-        client_handle: ClientHandle,
+        client_handle: ClientConnectionHandle,
         session_id: u32,
         create_session: bool,
     },
     ClientDisconnect {
         client_id: u32,
+    },
+    ClientRequestSwitchSession {
+        client_id: u32,
+    },
+    ClientSwitchSession {
+        client_id: u32,
+        session_id: u32,
     },
 
     // client -> session events
@@ -49,16 +57,18 @@ pub struct SessionManager {
     handle: SessionManagerHandle,
     rx: mpsc::Receiver<SessionManagerEvent>,
     sessions: HashMap<u32, SessionHandle>,
-    clients: HashMap<u32, ClientHandle>,
+    clients: HashMap<u32, ClientConnectionHandle>,
     session_to_client_mapping: HashMap<u32, Vec<u32>>, // support multiple clients attached to same session
     client_to_session_mapping: HashMap<u32, u32>,      // one client can only attach to one session
 }
 impl SessionManager {
+    #[instrument]
     pub fn spawn() -> Result<SessionManagerHandle> {
         let session_manager = SessionManager::new();
         session_manager.run()
     }
 
+    #[instrument]
     fn new() -> Self {
         let (tx, rx) = mpsc::channel(10);
         let handle = SessionManagerHandle { tx };
@@ -72,7 +82,9 @@ impl SessionManager {
         }
     }
 
+    #[instrument(skip(self))]
     fn run(mut self) -> crate::error::Result<SessionManagerHandle> {
+        let span = tracing::Span::current();
         let handle_clone = self.handle.clone();
         let _task = tokio::spawn({
             async move {
@@ -85,7 +97,7 @@ impl SessionManager {
                                 session_id,
                                 create_session,
                             } => {
-                                trace!("SessionManager: ClientConnect");
+                                debug!("SessionManager: ClientConnect");
                                 self.handle_client_connect(
                                     client_id,
                                     client_handle,
@@ -96,8 +108,23 @@ impl SessionManager {
                                 .unwrap();
                             }
                             ClientDisconnect { client_id } => {
-                                trace!("SessionManager: ClientDisconnect");
+                                debug!("SessionManager: ClientDisconnect");
                                 self.handle_client_disconnect(client_id).await.unwrap();
+                            }
+                            ClientRequestSwitchSession { client_id } => {
+                                debug!("SessionManager: ClientRequestSwitchSession");
+                                self.handle_client_request_switch_session(client_id)
+                                    .await
+                                    .unwrap();
+                            }
+                            ClientSwitchSession {
+                                client_id,
+                                session_id,
+                            } => {
+                                debug!("SessionManager: ClientSwitchSession");
+                                self.handle_client_switch_session(client_id, session_id)
+                                    .await
+                                    .unwrap();
                             }
                             UserInput { client_id, bytes } => {
                                 trace!("SessionManager: UserInput");
@@ -106,11 +133,11 @@ impl SessionManager {
                                     .unwrap();
                             }
                             UserSplitPane { client_id } => {
-                                trace!("SessionManager: UserSplitPane");
+                                debug!("SessionManager: UserSplitPane");
                                 self.handle_client_split_pane(client_id).await.unwrap();
                             }
                             UserKillPane { client_id } => {
-                                trace!("SessionManager: UserKillPane");
+                                debug!("SessionManager: UserKillPane");
                                 self.handle_client_kill_pane(client_id).await.unwrap();
                             }
                             SessionSendOutput { session_id, bytes } => {
@@ -123,6 +150,7 @@ impl SessionManager {
                     }
                 }
             }
+            .instrument(span)
         });
 
         Ok(handle_clone)
@@ -131,7 +159,7 @@ impl SessionManager {
     async fn handle_client_connect(
         &mut self,
         client_id: u32,
-        mut client_handle: ClientHandle,
+        client_handle: ClientConnectionHandle,
         session_id: u32,
         create_session: bool,
     ) -> Result<()> {
@@ -169,6 +197,34 @@ impl SessionManager {
         }
         Ok(())
     }
+    async fn handle_client_request_switch_session(&mut self, client_id: u32) -> Result<()> {
+        if let Some(client_handle) = self.clients.get(&client_id) {
+            client_handle
+                .respond_request_switch_session(self.sessions.keys().copied().collect())
+                .await?;
+        }
+        Ok(())
+    }
+    async fn handle_client_switch_session(
+        &mut self,
+        client_id: u32,
+        session_id: u32,
+    ) -> Result<()> {
+        let client_handle = self.unmap_client(client_id).unwrap();
+        self.map_client(client_id, client_handle, session_id);
+        if let Some(session_handle) = self.sessions.get(&session_id) {
+            session_handle.redraw().await?;
+        }
+        // let session_id = self.client_to_session_mapping.get(&client_id).unwrap();
+        // let mut clients = self.session_to_client_mapping.get_mut(&session_id).unwrap();
+        // clients.retain(|c| c != &client_id);
+        // if let Some(client_handle) = self.clients.get(&client_id) {
+        //     client_handle
+        //         .respond_request_switch_session(self.sessions.keys().copied().collect())
+        //         .await?;
+        // }
+        Ok(())
+    }
     async fn handle_client_send_user_input(&mut self, client_id: u32, bytes: Bytes) -> Result<()> {
         if let Some(session_id) = self.client_to_session_mapping.get(&client_id) {
             let session_handle = self.sessions.get_mut(session_id).unwrap();
@@ -201,6 +257,37 @@ impl SessionManager {
         }
         Ok(())
     }
+
+    fn map_client(
+        &mut self,
+        client_id: u32,
+        client_handle: ClientConnectionHandle,
+        session_id: u32,
+    ) -> Result<()> {
+        self.clients.insert(client_id, client_handle);
+        let clients = self
+            .session_to_client_mapping
+            .entry(session_id)
+            .or_insert(vec![]);
+        clients.push(client_id);
+        self.client_to_session_mapping.insert(client_id, session_id);
+
+        // let session_handle = self
+        //     .sessions
+        //     .get_mut(&session_id)
+        //     .expect("session should exist here");
+        Ok(())
+    }
+
+    fn unmap_client(&mut self, client_id: u32) -> Option<ClientConnectionHandle> {
+        let client_handle = self.clients.remove(&client_id)?;
+        if let Some(session_id) = self.client_to_session_mapping.remove(&client_id) {
+            if let Some(clients) = self.session_to_client_mapping.get_mut(&session_id) {
+                clients.retain(|c| c != &client_id);
+            }
+        }
+        Some(client_handle)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -210,8 +297,10 @@ pub struct SessionManagerHandle {
 // TODO: seperate handle for clients and sessions
 impl SessionManagerHandle {
     // Client -> SessionManager events
-    handle_method!(connect_client, ClientConnect, client_id: u32, client_handle: ClientHandle, session_id: u32, create_session: bool);
+    handle_method!(connect_client, ClientConnect, client_id: u32, client_handle: ClientConnectionHandle, session_id: u32, create_session: bool);
     handle_method!(disconnect_client, ClientDisconnect, client_id: u32);
+    handle_method!(client_request_switch_session, ClientRequestSwitchSession, client_id: u32);
+    handle_method!(client_switch_session, ClientSwitchSession, client_id: u32, session_id: u32);
     // Client -> Session events
     handle_method!(client_send_user_input, UserInput, client_id: u32, bytes: Bytes);
     handle_method!(client_send_kill_pane, UserKillPane, client_id: u32);

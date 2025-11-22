@@ -3,13 +3,16 @@ use bytes::Bytes;
 use crate::prelude::*;
 
 const CTRL_SPACE: u8 = 0x00;
+const CTRL_B: u8 = 0x02;
 const PERCENT: u8 = 0x25;
 const X: u8 = 0x78;
+const S: u8 = 0x73;
 
 pub enum ParsedEvents {
     Raw(Bytes),
     KillPane,
     SplitPane,
+    RequestSwitchSession, // trigger for UI switch session popup
 }
 
 pub struct InputParser {
@@ -25,60 +28,54 @@ impl InputParser {
         self.buf.extend(input);
 
         let mut events = vec![];
-        let mut p = 0;
         let mut i = 0;
         while i < self.buf.len() {
             let b = self.buf[i];
-
             match b {
-                CTRL_SPACE => {
-                    debug!("prefix detected");
+                CTRL_B => {
+                    trace!("prefix detected");
                     if (i + 1) < self.buf.len() {
                         let b_next = self.buf[i + 1];
+                        if i > 0 {
+                            let old: Vec<u8> = self.buf.drain(..i).collect();
+                            events.push(ParsedEvents::Raw(Bytes::from(old)));
+                            i = 0;
+                        }
                         match b_next {
                             PERCENT => {
-                                let old: Vec<u8> = self.buf.drain(p..i).collect();
-                                if !old.is_empty() {
-                                    events.push(ParsedEvents::Raw(Bytes::from(old)));
-                                }
                                 events.push(ParsedEvents::SplitPane);
-                                i += 2;
-                                p = i;
+                                self.buf.drain(..2);
                             }
                             X => {
-                                let old: Vec<u8> = self.buf.drain(p..i).collect();
-                                if !old.is_empty() {
-                                    events.push(ParsedEvents::Raw(Bytes::from(old)));
-                                }
                                 events.push(ParsedEvents::KillPane);
-                                i += 2;
-                                p = i;
+                                self.buf.drain(..2);
+                            }
+                            S => {
+                                events.push(ParsedEvents::RequestSwitchSession);
+                                self.buf.drain(..2);
                             }
                             _ => {
-                                let old: Vec<u8> = self.buf.drain(p..i).collect();
-                                if !old.is_empty() {
-                                    events.push(ParsedEvents::Raw(Bytes::from(old)));
-                                }
-                                i += 1;
-                                p = i;
+                                self.buf.drain(..=i);
                             }
                         }
+                        i = 0;
                     } else {
-                        let old: Vec<u8> = self.buf.drain(p..i).collect();
+                        let old: Vec<u8> = self.buf.drain(..i).collect();
                         if !old.is_empty() {
                             events.push(ParsedEvents::Raw(Bytes::from(old)));
                         }
-                        return events;
+                        break;
                     }
                 }
                 _ => i += 1,
             }
         }
 
-        let old: Vec<u8> = self.buf.drain(p..i).collect();
+        let old: Vec<u8> = self.buf.drain(..i).collect();
         if !old.is_empty() {
             events.push(ParsedEvents::Raw(Bytes::from(old)));
         }
+        trace!("return from process with remaining {:?}", self.buf);
         events
     }
 }

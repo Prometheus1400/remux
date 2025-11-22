@@ -1,5 +1,9 @@
+use bytes::Bytes;
 use remux_core::messages::RequestMessage;
 use thiserror::Error;
+use tokio::sync::mpsc::error::SendError;
+
+use crate::actors::{client::ClientEvent, ui::UiEvent};
 
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -31,12 +35,33 @@ pub enum Error {
         message: RequestMessage,
         source: remux_core::error::Error,
     },
-    // #[error("Error sending to tokio channel: {0}")]
-    // SendError(#[from] tokio::sync::mpsc::error::SendError<u8>),
-    //
-    // #[error("Error converting bytes to utf8 string: {0}")]
-    // UTF8Error(#[from] std::str::Utf8Error),
-    //
-    // #[error("Socket Error: {0}")]
-    // SocketError(remux_core::error::Error),
+
+    #[error("Event Send Error: {0}")]
+    EventSend(EventSendError),
+}
+
+#[derive(Error, Debug)]
+pub enum EventSendError {
+    #[error("IO send error: {0}")]
+    IO(SendError<ClientEvent>),
+    #[error("Popup send error: {0}")]
+    UI(SendError<UiEvent>),
+    #[error("Bytes send error: {0}")]
+    Bytes(SendError<Bytes>),
+}
+
+impl From<SendError<ClientEvent>> for Error {
+    fn from(e: SendError<ClientEvent>) -> Self {
+        Self::EventSend(EventSendError::IO(e))
+    }
+}
+impl From<SendError<UiEvent>> for Error {
+    fn from(e: SendError<UiEvent>) -> Self {
+        Self::EventSend(EventSendError::UI(e))
+    }
+}
+impl From<SendError<Bytes>> for Error {
+    fn from(e: SendError<Bytes>) -> Self {
+        Self::EventSend(EventSendError::Bytes(e))
+    }
 }

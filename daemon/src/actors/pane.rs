@@ -1,5 +1,6 @@
 use bytes::Bytes;
 use tokio::sync::mpsc;
+use tracing::Instrument;
 
 use crate::{
     actors::{
@@ -38,10 +39,12 @@ pub struct Pane {
     prev_screen_state: Option<vt100::Screen>,
 }
 impl Pane {
+    #[instrument(skip(window_handle))]
     pub fn spawn(window_handle: WindowHandle) -> Result<PaneHandle> {
         let pane = Pane::new(window_handle)?;
         pane.run()
     }
+    #[instrument(skip(window_handle))]
     fn new(window_handle: WindowHandle) -> Result<Self> {
         let (tx, rx) = mpsc::channel(10);
         let handle = PaneHandle { tx };
@@ -57,7 +60,9 @@ impl Pane {
             prev_screen_state: None,
         })
     }
+    #[instrument(skip(self))]
     fn run(mut self) -> Result<PaneHandle> {
+        let span = tracing::Span::current();
         let handle_clone = self.handle.clone();
         let _task = tokio::spawn({
             async move {
@@ -65,20 +70,20 @@ impl Pane {
                     if let Some(event) = self.rx.recv().await {
                         match event {
                             UserInput { bytes } => {
-                                trace!("Pane: UserInput");
+                                trace!("Pane: UserInput({bytes:?})");
                                 self.handle_input(bytes).await.unwrap();
                             }
                             PtyOutput { bytes } => {
-                                trace!("Pane: PtyOutput");
+                                trace!("Pane: PtyOutput({bytes:?}");
                                 self.handle_pty_output(bytes).await.unwrap();
                             }
                             PtyDied => {
-                                trace!("Pane: PtyDied");
+                                debug!("Pane: PtyDied");
                                 // TODO: notify the window that pane has died
                                 break;
                             }
                             Kill => {
-                                trace!("Pane: Kill");
+                                debug!("Pane: Kill");
                                 self.pty_handle.kill().await.unwrap();
                                 break;
                             }
@@ -87,21 +92,22 @@ impl Pane {
                                 self.handle_render().await.unwrap();
                             }
                             Rerender => {
-                                trace!("Pane: Rerender");
+                                debug!("Pane: Rerender");
                                 self.handle_rerender().await.unwrap();
                             }
                             Hide => {
-                                trace!("Pane: Hide");
+                                debug!("Pane: Hide");
                                 self.pane_state = PaneState::Hidden;
                             }
                             Reveal => {
-                                trace!("Pane: Reveal");
+                                debug!("Pane: Reveal");
                                 self.pane_state = PaneState::Visible;
                             }
                         }
                     }
                 }
             }
+            .instrument(span)
         });
 
         Ok(handle_clone)

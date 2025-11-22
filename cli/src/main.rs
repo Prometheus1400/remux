@@ -1,21 +1,23 @@
+mod actors;
 mod args;
 mod error;
+mod prelude;
+mod widgets;
 
 use clap::Parser;
-use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
+use ratatui::crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use remux_core::{
+    communication,
     daemon_utils::get_sock_path,
-    messages::{self, RequestMessage, ResponseBody, ResponseMessage},
+    messages::{RequestMessage, ResponseBody, ResponseMessage},
 };
-use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    net::UnixStream,
-};
-use tracing::{debug, error, info, trace};
+use tokio::net::UnixStream;
 
 use crate::{
+    actors::client::Client,
     args::{Args, Commands, SessionCommands},
     error::{Error, Result},
+    prelude::*,
 };
 
 #[tokio::main]
@@ -30,6 +32,12 @@ async fn main() {
             }
         }
         Err(e) => {
+            if let Err(e) = disable_raw_mode() {
+                eprintln!("error disabling raw mode: {e}");
+                eprintln!(
+                    "terminal may still be in raw mode!!! You can run 'stty sane' to reset it."
+                );
+            }
             eprintln!("{e}");
             std::process::exit(1);
         }
@@ -43,7 +51,7 @@ fn setup_logging() -> Result<tracing_appender::non_blocking::WorkerGuard> {
     let file_appender = rolling::daily("logs", "remux-cli.log");
     let (non_blocking, guard) = non_blocking(file_appender);
 
-    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("trace"));
+    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("debug"));
 
     let subscriber = fmt()
         .with_writer(non_blocking)
@@ -53,6 +61,7 @@ fn setup_logging() -> Result<tracing_appender::non_blocking::WorkerGuard> {
     Ok(guard)
 }
 
+#[instrument]
 async fn connect() -> Result<UnixStream> {
     let socket_path = get_sock_path()?;
     debug!("Connecting to {:?}", socket_path);
@@ -64,9 +73,10 @@ async fn connect() -> Result<UnixStream> {
         })
 }
 
+#[instrument(skip(stream))]
 async fn handle_session_command(mut stream: UnixStream, command: SessionCommands) -> Result<()> {
     let req: RequestMessage = command.into();
-    let res: ResponseMessage = messages::send_and_recv(&mut stream, &req).await?;
+    let res: ResponseMessage = communication::send_and_recv(&mut stream, &req).await?;
     match res.body {
         ResponseBody::SessionsList { sessions } => {
             println!("{sessions:?}");
@@ -83,101 +93,30 @@ async fn run(command: Commands) -> Result<()> {
     }
 }
 
+#[instrument(skip(stream, attach_message))]
 async fn attach(mut stream: UnixStream, attach_message: RequestMessage) -> Result<()> {
     debug!("Sending attach request");
-    messages::write_message(&mut stream, &attach_message)
+    communication::write_message(&mut stream, &attach_message)
         .await
         .map_err(|source| Error::SendRequestMessage {
             message: attach_message,
             source,
         })?;
     debug!("Sent attach request successfully");
-
-    let (send_to_tcp, mut recv_for_tcp) = tokio::sync::mpsc::unbounded_channel::<u8>();
-    let (send_cancel_stdin_task, mut recv_cancel_stdin_task) =
-        tokio::sync::mpsc::unbounded_channel::<u8>();
-
     enable_raw_mode()?;
-    let tcp_task: tokio::task::JoinHandle<std::result::Result<_, Error>> =
-        tokio::spawn(async move {
-            let mut stdout = tokio::io::stdout();
-            let mut buf = [0u8; 1024];
-            loop {
-                tokio::select! {
-                    Ok(n) = stream.read(&mut buf) => {
-                        if n > 0 {
-                            trace!("Read {n} bytes from daemon");
-                            stdout.write_all(&buf[..n]).await?;
-                            stdout.flush().await?;
-                        } else {
-                            // stream closed
-                            break;
-                        }
-                    },
-                    b_opt = recv_for_tcp.recv() => {
-                        match b_opt{
-                            Some(b) => {
-                                trace!("Sending byte '{}' to tcp stream", b);
-                                stream.write_u8(b).await?;
-                            },
-                            None => {
-                                debug!("channel closed");
-                                break;
-                            },
-                        }
-                    }
-                }
+    debug!("raw mode enabled");
+    if let Ok(task) = Client::spawn(stream) {
+        match task.await {
+            Ok(Err(e)) => {
+                error!("Error joining client task: {e}");
             }
-            info!("closing tcp task");
-            send_cancel_stdin_task
-                .send(1)
-                .map_err(|_| Error::Custom("can't send to cancel stdin channel".to_owned()))?;
-            Ok(())
-        });
-
-    let stdin_task: tokio::task::JoinHandle<std::result::Result<_, Error>> =
-        tokio::spawn(async move {
-            let mut stdin = tokio::io::stdin(); // read here
-            let mut buf = [0u8; 1024];
-            loop {
-                tokio::select! {
-                    // after all tasks exit the read is still blocked under the hood so it needs some
-                    // keypress to trigger the release
-                    stdin_res = stdin.read(&mut buf) => {
-                        match stdin_res {
-                            Ok(n) if n > 0 => {
-                                trace!("Sending {n} bytes to daemon");
-                                for &b in &buf[..n] {
-                                    send_to_tcp.send(b).map_err(|_| {
-                                        Error::Custom("can't send to tcp channel".to_owned())
-                                    })?;
-                                }
-                            }
-                            Ok(_) => {
-                                debug!("stream closed");
-                                break; // stream is closed
-                            }
-                            Err(e) => {
-                                error!("Error reading from stdin: {e}");
-                                continue;
-                            }
-                        }
-                    },
-                    Some(_) = recv_cancel_stdin_task.recv() => {
-                        break;
-                    }
-                }
+            Err(e) => {
+                error!("Error joining client task: {e}");
             }
-            info!("closing stdin task");
-            Ok(())
-        });
-
-    if let Err(e) = tokio::try_join!(tcp_task, stdin_task) {
-        error!("error joining tokio tasks: {e}");
-        disable_raw_mode()?;
-        Err(e.into())
-    } else {
-        disable_raw_mode()?;
-        Ok(())
+            _ => {}
+        }
     }
+    disable_raw_mode()?;
+    debug!("Disabled raw mode");
+    Ok(())
 }
