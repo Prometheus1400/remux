@@ -24,6 +24,9 @@ pub enum SessionManagerEvent {
     ClientDisconnect {
         client_id: u32,
     },
+    ClientRequestSwitchSession {
+        client_id: u32,
+    },
 
     // client -> session events
     UserInput {
@@ -99,6 +102,12 @@ impl SessionManager {
                                 trace!("SessionManager: ClientDisconnect");
                                 self.handle_client_disconnect(client_id).await.unwrap();
                             }
+                            ClientRequestSwitchSession { client_id } => {
+                                trace!("SessionManager: ClientRequestSwitchSession");
+                                self.handle_client_request_switch_session(client_id)
+                                    .await
+                                    .unwrap();
+                            }
                             UserInput { client_id, bytes } => {
                                 trace!("SessionManager: UserInput");
                                 self.handle_client_send_user_input(client_id, bytes)
@@ -131,7 +140,7 @@ impl SessionManager {
     async fn handle_client_connect(
         &mut self,
         client_id: u32,
-        mut client_handle: ClientHandle,
+        client_handle: ClientHandle,
         session_id: u32,
         create_session: bool,
     ) -> Result<()> {
@@ -166,6 +175,14 @@ impl SessionManager {
             if let Some(clients) = self.session_to_client_mapping.get_mut(&session_id) {
                 clients.retain(|c| c != &client_id);
             }
+        }
+        Ok(())
+    }
+    async fn handle_client_request_switch_session(&mut self, client_id: u32) -> Result<()> {
+        if let Some(client_handle) = self.clients.get(&client_id) {
+            client_handle
+                .respond_request_switch_session(self.sessions.keys().copied().collect())
+                .await?;
         }
         Ok(())
     }
@@ -212,6 +229,7 @@ impl SessionManagerHandle {
     // Client -> SessionManager events
     handle_method!(connect_client, ClientConnect, client_id: u32, client_handle: ClientHandle, session_id: u32, create_session: bool);
     handle_method!(disconnect_client, ClientDisconnect, client_id: u32);
+    handle_method!(client_request_switch_session, ClientRequestSwitchSession, client_id: u32);
     // Client -> Session events
     handle_method!(client_send_user_input, UserInput, client_id: u32, bytes: Bytes);
     handle_method!(client_send_kill_pane, UserKillPane, client_id: u32);

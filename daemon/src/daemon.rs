@@ -1,6 +1,7 @@
 use std::fs::{File, remove_file};
 
 use remux_core::{
+    communication,
     daemon_utils::{get_sock_path, lock_daemon_file},
     messages::{self, RequestBody},
 };
@@ -57,11 +58,11 @@ async fn handle_communication(
     session_manager_handle: SessionManagerHandle,
     mut stream: UnixStream,
 ) -> Result<()> {
-    let req = messages::read_req(&mut stream).await?;
+    let req = communication::read_req(&mut stream).await?;
     match req.body {
         RequestBody::Attach { session_id } => {
             debug!("running new client actor");
-            let mut client = Client::spawn(stream, session_manager_handle).unwrap();
+            let client = Client::spawn(stream, session_manager_handle).unwrap();
             client.request_session_attach(session_id).await.unwrap();
         }
         RequestBody::SessionsList => {

@@ -13,7 +13,7 @@ use crate::prelude::*;
 
 async fn run() -> Result<()> {
     let subscriber = FmtSubscriber::builder()
-        .with_max_level(tracing::Level::DEBUG)
+        .with_max_level(tracing::Level::TRACE)
         .finish();
     tracing::subscriber::set_global_default(subscriber)?;
 
