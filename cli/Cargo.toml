@@ -5,6 +5,7 @@ edition.workspace = true
 authors = ["Kaleb Dickerson", "Ryan Weisman"]
 
 [dependencies]
+handle-macro = {path = "../handle-macro"}
 remux-core = { path = "../core" }
 
 serde.workspace = true

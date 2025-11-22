@@ -1,6 +1,7 @@
 use std::{collections::HashMap, vec};
 
 use bytes::Bytes;
+use handle_macro::Handle;
 use tokio::sync::mpsc;
 use tracing::Instrument;
 
@@ -14,6 +15,7 @@ use crate::{
 };
 
 #[allow(unused)]
+#[derive(Handle)]
 pub enum SessionManagerEvent {
     // client -> session manager events
     ClientConnect {
@@ -169,7 +171,7 @@ impl SessionManager {
                 let new_session = Session::spawn(session_id, self.handle.clone()).unwrap();
                 self.sessions.insert(session_id, new_session);
             } else {
-                client_handle.notify_attach_failed(session_id).await?;
+                client_handle.failed_attach_to_session(session_id).await?;
             }
         }
         // session exists
@@ -185,8 +187,8 @@ impl SessionManager {
             .sessions
             .get_mut(&session_id)
             .expect("session should exist here");
-        client_handle.notify_attach_succeeded(session_id).await?;
-        session_handle.send_new_connection().await
+        client_handle.success_attach_to_session(session_id).await?;
+        session_handle.user_connection().await
     }
     async fn handle_client_disconnect(&mut self, client_id: u32) -> Result<()> {
         self.clients.remove(&client_id);
@@ -228,7 +230,7 @@ impl SessionManager {
     async fn handle_client_send_user_input(&mut self, client_id: u32, bytes: Bytes) -> Result<()> {
         if let Some(session_id) = self.client_to_session_mapping.get(&client_id) {
             let session_handle = self.sessions.get_mut(session_id).unwrap();
-            session_handle.send_user_input(bytes).await
+            session_handle.user_input(bytes).await
         } else {
             Ok(())
         }
@@ -236,7 +238,7 @@ impl SessionManager {
     async fn handle_client_kill_pane(&mut self, client_id: u32) -> Result<()> {
         if let Some(session_id) = self.client_to_session_mapping.get(&client_id) {
             let session_handle = self.sessions.get_mut(session_id).unwrap();
-            session_handle.send_user_kill_pane().await
+            session_handle.kill().await
         } else {
             Ok(())
         }
@@ -244,7 +246,7 @@ impl SessionManager {
     async fn handle_client_split_pane(&mut self, client_id: u32) -> Result<()> {
         if let Some(session_id) = self.client_to_session_mapping.get(&client_id) {
             let session_handle = self.sessions.get_mut(session_id).unwrap();
-            session_handle.send_user_split_pane().await
+            session_handle.user_split_pane().await
         } else {
             // TODO: should error
             Ok(())
@@ -253,7 +255,7 @@ impl SessionManager {
     async fn handle_session_send_output(&mut self, session_id: u32, bytes: Bytes) -> Result<()> {
         for client_id in self.session_to_client_mapping.get(&session_id).unwrap() {
             let client_handle = self.clients.get_mut(client_id).unwrap();
-            client_handle.send_output(bytes.clone()).await?;
+            client_handle.session_output(bytes.clone()).await?;
         }
         Ok(())
     }
@@ -288,23 +290,4 @@ impl SessionManager {
         }
         Some(client_handle)
     }
-}
-
-#[derive(Debug, Clone)]
-pub struct SessionManagerHandle {
-    tx: mpsc::Sender<SessionManagerEvent>,
-}
-// TODO: seperate handle for clients and sessions
-impl SessionManagerHandle {
-    // Client -> SessionManager events
-    handle_method!(connect_client, ClientConnect, client_id: u32, client_handle: ClientConnectionHandle, session_id: u32, create_session: bool);
-    handle_method!(disconnect_client, ClientDisconnect, client_id: u32);
-    handle_method!(client_request_switch_session, ClientRequestSwitchSession, client_id: u32);
-    handle_method!(client_switch_session, ClientSwitchSession, client_id: u32, session_id: u32);
-    // Client -> Session events
-    handle_method!(client_send_user_input, UserInput, client_id: u32, bytes: Bytes);
-    handle_method!(client_send_kill_pane, UserKillPane, client_id: u32);
-    handle_method!(client_send_split_pane, UserSplitPane, client_id: u32);
-    // Session -> Client events
-    handle_method!(session_send_output, SessionSendOutput, session_id: u32, bytes: Bytes);
 }

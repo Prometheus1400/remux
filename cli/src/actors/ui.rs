@@ -1,13 +1,14 @@
 use std::io::{Stdout, stdout};
 
 use bytes::Bytes;
+use handle_macro::Handle;
 use ratatui::{Terminal, prelude::CrosstermBackend};
 use tokio::sync::mpsc;
 use tracing::Instrument;
 
 use crate::{actors::client::ClientHandle, prelude::*, widgets};
 
-#[derive(Debug)]
+#[derive(Handle)]
 pub enum UiEvent {
     SelectSession { session_ids: Vec<u32> },
     Kill,
@@ -88,18 +89,5 @@ impl Ui {
             self.client_handle.send_switch_session(None).await?
         }
         Ok(())
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct UiHandle {
-    tx: mpsc::Sender<UiEvent>,
-}
-impl UiHandle {
-    pub async fn send_select_session(&mut self, session_ids: Vec<u32>) -> Result<()> {
-        Ok(self.tx.send(SelectSession { session_ids }).await?)
-    }
-    pub async fn send_kill(&mut self) -> Result<()> {
-        Ok(self.tx.send(Kill).await?)
     }
 }

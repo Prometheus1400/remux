@@ -1,4 +1,5 @@
 use bytes::Bytes;
+use handle_macro::Handle;
 use tokio::sync::mpsc;
 use tracing::Instrument;
 
@@ -10,7 +11,7 @@ use crate::{
     prelude::*,
 };
 
-#[derive(Debug)]
+#[derive(Handle)]
 pub enum WindowEvent {
     UserInput { bytes: Bytes },  // input from user
     PaneOutput { bytes: Bytes }, // output from pane
@@ -36,13 +37,13 @@ pub struct Window {
 }
 impl Window {
     async fn handle_user_input(&mut self, bytes: Bytes) -> Result<()> {
-        self.pane_handle.send_user_input(bytes).await
+        self.pane_handle.user_input(bytes).await
     }
     async fn handle_pane_output(&mut self, bytes: Bytes) -> Result<()> {
-        self.session_handle.send_window_output(bytes).await
+        self.session_handle.window_output(bytes).await
     }
     async fn handle_redraw(&mut self) -> Result<()> {
-        self.pane_handle.request_rerender().await
+        self.pane_handle.rerender().await
     }
 }
 impl Window {
@@ -99,14 +100,4 @@ impl Window {
 
         Ok(handle_clone)
     }
-}
-#[derive(Debug, Clone)]
-pub struct WindowHandle {
-    tx: mpsc::Sender<WindowEvent>,
-}
-impl WindowHandle {
-    handle_method!(send_pane_output, PaneOutput, bytes: Bytes);
-    handle_method!(send_user_input, UserInput, bytes: Bytes);
-    handle_method!(redraw, Redraw);
-    handle_method!(kill, Kill);
 }

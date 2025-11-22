@@ -1,4 +1,5 @@
 use bytes::Bytes;
+use handle_macro::Handle;
 use tokio::sync::mpsc;
 use tracing::Instrument;
 
@@ -12,7 +13,7 @@ use crate::{
 };
 
 #[allow(unused)]
-#[derive(Debug)]
+#[derive(Handle)]
 pub enum SessionEvent {
     // user input
     UserInput { bytes: Bytes },
@@ -105,7 +106,7 @@ impl Session {
     }
 
     async fn handle_user_input(&self, bytes: Bytes) -> Result<()> {
-        self.window_handle.send_user_input(bytes).await
+        self.window_handle.user_input(bytes).await
     }
 
     async fn handle_window_output(&self, bytes: Bytes) -> Result<()> {
@@ -117,18 +118,4 @@ impl Session {
     async fn handle_new_connection(&self) -> Result<()> {
         self.window_handle.redraw().await
     }
-}
-#[derive(Debug, Clone)]
-pub struct SessionHandle {
-    tx: mpsc::Sender<SessionEvent>,
-}
-#[allow(unused)]
-impl SessionHandle {
-    handle_method!(send_user_input, UserInput, bytes: Bytes);
-    handle_method!(send_window_output, WindowOutput, bytes: Bytes);
-    handle_method!(send_user_split_pane, UserSplitPane);
-    handle_method!(send_user_kill_pane, UserKillPane);
-    handle_method!(send_new_connection, UserConnection);
-    handle_method!(redraw, Redraw);
-    handle_method!(kill, Kill);
 }

@@ -1,4 +1,5 @@
 use bytes::Bytes;
+use handle_macro::Handle;
 use tokio::sync::mpsc;
 use tracing::Instrument;
 
@@ -11,6 +12,7 @@ use crate::{
     prelude::*,
 };
 
+#[derive(Handle)]
 pub enum PaneEvent {
     UserInput { bytes: Bytes },
     PtyOutput { bytes: Bytes },
@@ -114,13 +116,13 @@ impl Pane {
     }
 
     async fn handle_input(&mut self, bytes: Bytes) -> Result<()> {
-        self.pty_handle.send(bytes).await.unwrap();
+        self.pty_handle.input(bytes).await.unwrap();
         Ok(())
     }
 
     async fn handle_pty_output(&mut self, bytes: Bytes) -> Result<()> {
         self.vte.process(&bytes);
-        self.handle.request_render().await
+        self.handle.render().await
     }
 
     async fn handle_render(&mut self) -> Result<()> {
@@ -131,7 +133,7 @@ impl Pane {
                 self.prev_screen_state = Some(cur_screen_state);
                 Ok(self
                     .window_handle
-                    .send_pane_output(Bytes::copy_from_slice(&diff))
+                    .pane_output(Bytes::copy_from_slice(&diff))
                     .await?)
             }
             None => self.handle_rerender().await,
@@ -144,7 +146,7 @@ impl Pane {
 
         let new_state = self.vte.screen().state_formatted();
         let output = CLEAR.iter().chain(new_state.iter()).copied().collect();
-        self.window_handle.send_pane_output(output).await
+        self.window_handle.pane_output(output).await
         // TODO : todo!("don't need to send this when pane is hidden");
         // match self.state {
         //     PaneState::Visible => {
@@ -153,22 +155,4 @@ impl Pane {
         //     }
         // }
     }
-}
-
-#[derive(Debug, Clone)]
-pub struct PaneHandle {
-    tx: mpsc::Sender<PaneEvent>,
-}
-#[allow(unused)]
-impl PaneHandle {
-    // public api
-    handle_method!(send_user_input, UserInput, bytes: Bytes);
-    handle_method!(send_output_from_pty, PtyOutput, bytes: Bytes);
-    handle_method!(request_rerender, Rerender);
-    handle_method!(notify_pty_died, PtyDied);
-    handle_method!(hide, Hide);
-    handle_method!(reveal, Reveal);
-    handle_method!(kill, Kill);
-    // internal
-    handle_method!(request_render, Render);
 }

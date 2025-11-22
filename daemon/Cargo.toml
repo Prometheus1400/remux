@@ -6,6 +6,7 @@ authors = ["Kaleb Dickerson", "Ryan Weisman"]
 
 
 [dependencies]
+handle-macro = {path = "../handle-macro"}
 remux-core = { path = "../core" }
 
 bytes.workspace = true

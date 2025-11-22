@@ -1,4 +1,5 @@
 use bytes::Bytes;
+use handle_macro::Handle;
 use remux_core::{communication, events::DaemonEvent};
 use tokio::{io::AsyncWriteExt, net::UnixStream, sync::mpsc};
 use tracing::Instrument;
@@ -11,6 +12,7 @@ use crate::{
 };
 
 #[allow(unused)]
+#[derive(Handle)]
 pub enum ClientConnectionEvent {
     AttachToSession { session_id: u32 },
     SuccessAttachToSession { session_id: u32 },
@@ -75,7 +77,7 @@ impl ClientConnection {
                             match event {
                                 AttachToSession{session_id} => {
                                     debug!("Client: AttachToSession");
-                                    self.session_manager_handle.connect_client(self.id, handle.clone(), session_id, true).await.unwrap();
+                                    self.session_manager_handle.client_connect(self.id, handle.clone(), session_id, true).await.unwrap();
                                     self.state = ClientConnectionState::Attaching(session_id);
                                 }
                                 SuccessAttachToSession{session_id} => {
@@ -115,15 +117,15 @@ impl ClientConnection {
                                                 match event {
                                                     ParsedEvents::Raw(bytes) => {
                                                         trace!("Client Event Input: raw({bytes:?})");
-                                                        self.session_manager_handle.client_send_user_input(self.id, bytes).await.unwrap();
+                                                        self.session_manager_handle.user_input(self.id, bytes).await.unwrap();
                                                     },
                                                     ParsedEvents::KillPane => {
                                                         debug!("Client Event Input: kill pane");
-                                                        self.session_manager_handle.client_send_kill_pane(self.id).await.unwrap();
+                                                        self.session_manager_handle.user_kill_pane(self.id).await.unwrap();
                                                     },
                                                     ParsedEvents::SplitPane => {
                                                         debug!("Client Event Input: split pane");
-                                                        self.session_manager_handle.client_send_split_pane(self.id).await.unwrap();
+                                                        self.session_manager_handle.user_split_pane(self.id).await.unwrap();
                                                     },
                                                     ParsedEvents::RequestSwitchSession => {
                                                         debug!("Client Event Input: request switch session");
@@ -141,7 +143,7 @@ impl ClientConnection {
                                 Err(_) => {
                                     // client disconnected
                                     debug!("Client disconnected");
-                                    self.session_manager_handle.disconnect_client(self.id).await.unwrap();
+                                    self.session_manager_handle.client_disconnect(self.id).await.unwrap();
                                     break;
                                 }
                             }
@@ -152,27 +154,5 @@ impl ClientConnection {
         });
 
         Ok(handle_clone)
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct ClientConnectionHandle {
-    tx: mpsc::Sender<ClientConnectionEvent>,
-}
-#[allow(unused)]
-impl ClientConnectionHandle {
-    handle_method!(send_output, SessionOutput, bytes: Bytes);
-    handle_method!(request_session_attach, AttachToSession, session_id: u32);
-    handle_method!(respond_request_switch_session, RespondRequestSwitchSession, session_ids: Vec<u32>);
-    handle_method!(notify_attach_failed, FailedAttachToSession, session_id: u32);
-    handle_method!(notify_attach_succeeded, SuccessAttachToSession, session_id: u32);
-    handle_method!(request_session_detach, DetachFromSession, session_id: u32);
-
-    async fn kill(&self) -> crate::error::Result<()> {
-        todo!()
-    }
-
-    fn is_alive(&self) -> bool {
-        todo!()
     }
 }
