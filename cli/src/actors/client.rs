@@ -103,7 +103,7 @@ impl Client {
                                             debug!("DaemonEvent(SwitchSessionOptions({session_ids:?}))");
                                             self.daemon_events_state = DaemonEventsState::Blocked;
                                             self.stdin_state = StdinState::Popup;
-                                            self.ui_handle.send_select_session(session_ids).await?;
+                                            self.ui_handle.select_session(session_ids).await?;
                                         }
                                     }
                                 }

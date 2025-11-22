@@ -1,5 +1,5 @@
 [workspace]
-members = ["daemon", "cli", "core"]
+members = ["daemon", "cli", "core", "handle-macro"]
 resolver = "3"
 
 [workspace.package]

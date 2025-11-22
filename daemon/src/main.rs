@@ -3,7 +3,6 @@ mod control_signals;
 mod daemon;
 mod error;
 mod input_parser;
-mod macros;
 mod prelude;
 
 use daemon::RemuxDaemon;

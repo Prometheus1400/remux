@@ -4,6 +4,7 @@ use std::{
 };
 
 use bytes::Bytes;
+use handle_macro::Handle;
 use nix::{
     errno::Errno,
     libc::{F_GETFL, F_SETFL, O_NONBLOCK, fcntl},
@@ -22,7 +23,7 @@ use tracing::Instrument;
 
 use crate::{actors::pane::PaneHandle, prelude::*};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Handle)]
 pub enum PtyEvent {
     Kill,
     Input { bytes: Bytes },
@@ -85,7 +86,7 @@ impl Pty {
                                     match guard.try_io(|fd| unistd::read(fd.get_ref(), &mut buf).map_err(|e| e.into())) {
                                         Ok(Ok(n)) if n > 0 => {
                                             trace!("Pty: read {n} bytes from fd");
-                                            self.pane_handle.send_output_from_pty(Bytes::copy_from_slice(&buf[..n])).await.unwrap();
+                                            self.pane_handle.pty_output(Bytes::copy_from_slice(&buf[..n])).await.unwrap();
                                         },
                                         Ok(Ok(_)) => {
                                             handler.kill().await?;
@@ -154,7 +155,7 @@ impl Pty {
                             Err(err) => error!("waitpid failed: {}", err),
                         }
                         debug!("stopping PtyProcess run");
-                        self.pane_handle.notify_pty_died().await.unwrap();
+                        self.pane_handle.pty_died().await.unwrap();
                         Ok(())
                     }.instrument(span)
                 });
@@ -175,15 +176,6 @@ impl Pty {
         info!("killing pty child process {child}");
         Ok(())
     }
-}
-
-#[derive(Debug, Clone)]
-pub struct PtyHandle {
-    tx: mpsc::Sender<PtyEvent>,
-}
-impl PtyHandle {
-    handle_method!(send, Input, bytes: Bytes);
-    handle_method!(kill, Kill);
 }
 
 fn set_fd_nonblocking(owned_fd: &OwnedFd) -> Result<()> {

@@ -402,6 +402,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "handle-macro"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "proc-macro2",
+ "quote",
+ "syn",
+ "tokio",
+]
+
+[[package]]
 name = "hashbrown"
 version = "0.15.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -773,6 +784,7 @@ dependencies = [
  "bytes",
  "clap",
  "crossterm 0.29.0",
+ "handle-macro",
  "ratatui",
  "remux-core",
  "serde",
@@ -803,6 +815,7 @@ name = "remux-daemon"
 version = "0.1.0"
 dependencies = [
  "bytes",
+ "handle-macro",
  "itertools 0.14.0",
  "nix",
  "pty",

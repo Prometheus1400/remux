@@ -63,7 +63,7 @@ async fn handle_communication(
         RequestBody::Attach { session_id } => {
             debug!("running new client actor");
             let client = ClientConnection::spawn(stream, session_manager_handle).unwrap();
-            client.request_session_attach(session_id).await.unwrap();
+            client.attach_to_session(session_id).await.unwrap();
         }
         RequestBody::SessionsList => {
             todo!()
