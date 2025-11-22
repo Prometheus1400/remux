@@ -2,6 +2,7 @@ use std::{collections::HashMap, vec};
 
 use bytes::Bytes;
 use tokio::sync::mpsc;
+use tracing::Instrument;
 
 use crate::{
     actors::{
@@ -83,6 +84,7 @@ impl SessionManager {
 
     #[instrument(skip(self))]
     fn run(mut self) -> crate::error::Result<SessionManagerHandle> {
+        let span = tracing::Span::current();
         let handle_clone = self.handle.clone();
         let _task = tokio::spawn({
             async move {
@@ -148,6 +150,7 @@ impl SessionManager {
                     }
                 }
             }
+            .instrument(span)
         });
 
         Ok(handle_clone)
