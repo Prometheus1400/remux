@@ -72,18 +72,16 @@ impl Client {
     fn run(mut self) -> Result<CliTask> {
         let task: CliTask = tokio::spawn({
             let span = tracing::Span::current();
-            let mut stdin = tokio::io::stdin(); // read here
+            let mut stdin = tokio::io::stdin();
             let mut stdin_buf = [0u8; 1024];
-            let mut stdout = tokio::io::stdout(); // read here
+            let mut stdout = tokio::io::stdout();
             async move {
-                enable_raw_mode()?;
-                debug!("raw mode enabled");
                 loop {
                     tokio::select! {
                         Some(event) = self.rx.recv() => {
                             match event {
                                 SwitchSession {session_id} => {
-                                    debug!("IO: IO Event(SwitchSession)");
+                                    debug!("SwitchSession({session_id:?}))");
                                     if let Some(session_id) = session_id {
                                         communication::send_event(&mut self.stream, CliEvent::SwitchSession { session_id }).await.unwrap();
                                     }
@@ -97,19 +95,20 @@ impl Client {
                                 Ok(event) => {
                                     match event {
                                         DaemonEvent::Raw{bytes} => {
-                                            trace!("IO: DaemonEvent(Raw)");
+                                            trace!("DaemonEvent(Raw({bytes:?}))");
                                             stdout.write_all(&bytes).await?;
                                             stdout.flush().await?;
                                         }
                                         DaemonEvent::SwitchSessionOptions{session_ids} => {
-                                            debug!("IO: DaemonEvent(SwitchSessionOptions)");
+                                            debug!("DaemonEvent(SwitchSessionOptions({session_ids:?}))");
                                             self.daemon_events_state = DaemonEventsState::Blocked;
                                             self.stdin_state = StdinState::Popup;
                                             self.ui_handle.send_select_session(session_ids).await?;
                                         }
                                     }
                                 }
-                                Err(_) => {
+                                Err(e) => {
+                                    error!("Error receiving daemon event: {e}");
                                     break;
                                 }
                             }
@@ -132,7 +131,8 @@ impl Client {
                                 Ok(_) => {
                                     break;
                                 }
-                                Err(_) => {
+                                Err(e) => {
+                                    error!("Error receiving stdin: {e}");
                                     continue;
                                 }
                             }
@@ -140,8 +140,6 @@ impl Client {
                     }
                 }
                 debug!("Client stopped");
-                disable_raw_mode()?;
-                debug!("Disabled raw mode");
                 Ok(())
             }.instrument(span)
         });

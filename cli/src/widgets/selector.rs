@@ -63,7 +63,7 @@ where
         })
         .ok()?;
         if let Some(bytes) = rx.recv().await {
-            debug!("received input in widget");
+            trace!("received input in widget");
             match Event::parse_from(&bytes) {
                 Ok(None) => {
                     warn!("Couldn't fully parse bytes to terminal event");

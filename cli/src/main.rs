@@ -5,6 +5,7 @@ mod prelude;
 mod widgets;
 
 use clap::Parser;
+use ratatui::crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use remux_core::{
     communication,
     daemon_utils::get_sock_path,
@@ -31,6 +32,12 @@ async fn main() {
             }
         }
         Err(e) => {
+            if let Err(e) = disable_raw_mode() {
+                eprintln!("error disabling raw mode: {e}");
+                eprintln!(
+                    "terminal may still be in raw mode!!! You can run 'stty sane' to reset it."
+                );
+            }
             eprintln!("{e}");
             std::process::exit(1);
         }
@@ -44,7 +51,7 @@ fn setup_logging() -> Result<tracing_appender::non_blocking::WorkerGuard> {
     let file_appender = rolling::daily("logs", "remux-cli.log");
     let (non_blocking, guard) = non_blocking(file_appender);
 
-    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("trace"));
+    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("debug"));
 
     let subscriber = fmt()
         .with_writer(non_blocking)
@@ -96,6 +103,8 @@ async fn attach(mut stream: UnixStream, attach_message: RequestMessage) -> Resul
             source,
         })?;
     debug!("Sent attach request successfully");
+    enable_raw_mode()?;
+    debug!("raw mode enabled");
     if let Ok(task) = Client::spawn(stream) {
         match task.await {
             Ok(Err(e)) => {
@@ -107,5 +116,7 @@ async fn attach(mut stream: UnixStream, attach_message: RequestMessage) -> Resul
             _ => {}
         }
     }
+    disable_raw_mode()?;
+    debug!("Disabled raw mode");
     Ok(())
 }
