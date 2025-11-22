@@ -9,7 +9,7 @@ use tokio::net::{UnixListener, UnixStream};
 
 use crate::{
     actors::{
-        client::ClientConnection,
+        client_connection::ClientConnection,
         session_manager::{SessionManager, SessionManagerHandle},
     },
     error::Result,

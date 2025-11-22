@@ -1,6 +1,6 @@
-use std::io;
-
 use bytes::Bytes;
+use crossterm::terminal::disable_raw_mode;
+use ratatui::crossterm::terminal::enable_raw_mode;
 use remux_core::{
     communication,
     events::{CliEvent, DaemonEvent},
@@ -8,19 +8,17 @@ use remux_core::{
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::UnixStream,
-    sync::mpsc::{self, Sender},
+    sync::mpsc,
 };
-use tracing::debug;
+use tracing::{Instrument, debug};
 
 use crate::{
-    actors::popup::{Popup, PopupHandle},
+    actors::ui::{Ui, UiHandle},
     prelude::*,
-    widgets,
 };
 
 #[derive(Debug)]
 pub enum ClientEvent {
-    // RawInput { bytes: Bytes },
     SwitchSession { session_id: Option<u32> },
 }
 use ClientEvent::*;
@@ -39,64 +37,51 @@ enum DaemonEventsState {
 
 #[derive(Debug)]
 pub struct Client {
-    handle: IOHandle,
-    rx: mpsc::Receiver<ClientEvent>,
-    stream: UnixStream,
-    popup_handle: PopupHandle,
-    stdin_state: StdinState,
-    daemon_events_state: DaemonEventsState,
-
-    // for stdin routing
-    // daemon_tx: mpsc::Sender<Bytes>,
-    // daemon_rx: mpsc::Receiver<Bytes>,
-    popup_tx: mpsc::Sender<Bytes>,
+    stream: UnixStream,                     // the client owns the stream
+    handle: ClientHandle,                   // handle used to send the client events
+    rx: mpsc::Receiver<ClientEvent>,        // receiver for client events
+    ui_handle: UiHandle,                    // handle used to send the popup actor events
+    stdin_state: StdinState,                // for routing stdin to daemon or popup actor
+    daemon_events_state: DaemonEventsState, // determines if currently accepting events from daemon
+    ui_tx: mpsc::Sender<Bytes>,             // this is for popup actor to connect to stdin
 }
 impl Client {
+    #[instrument(skip(stream))]
     pub fn spawn(stream: UnixStream) -> Result<CliTask> {
         Client::new(stream)?.run()
     }
 
+    #[instrument(skip(stream))]
     fn new(stream: UnixStream) -> Result<Self> {
         let (tx, rx) = mpsc::channel(100);
-        // let (daemon_tx, daemon_rx) = mpsc::channel(100);
-        let (popup_tx, popup_rx) = mpsc::channel(100);
-        let handle = IOHandle { tx };
-        let popup_handle = Popup::spawn(popup_rx, handle.clone())?;
+        let (ui_tx, popup_rx) = mpsc::channel(100);
+        let handle = ClientHandle { tx };
+        let popup_handle = Ui::spawn(popup_rx, handle.clone())?;
         Ok(Self {
             handle,
             rx,
             stream,
-            popup_handle,
+            ui_handle: popup_handle,
             stdin_state: StdinState::Daemon,
             daemon_events_state: DaemonEventsState::Unblocked,
-            // daemon_tx,
-            // daemon_rx,
-            popup_tx,
+            ui_tx,
         })
     }
 
+    #[instrument(skip(self), fields(stdin_state = ?self.stdin_state,  daemon_events_state = ?self.daemon_events_state))]
     fn run(mut self) -> Result<CliTask> {
         let task: CliTask = tokio::spawn({
+            let span = tracing::Span::current();
             let mut stdin = tokio::io::stdin(); // read here
             let mut stdin_buf = [0u8; 1024];
             let mut stdout = tokio::io::stdout(); // read here
             async move {
+                enable_raw_mode()?;
+                debug!("raw mode enabled");
                 loop {
                     tokio::select! {
                         Some(event) = self.rx.recv() => {
                             match event {
-                                // RawInput {bytes} => {
-                                //     match self.stdin_state {
-                                //         StdinState::Daemon => {
-                                //             debug!("IO: IO Event(RawInput) - sending to daemon");
-                                //             communication::send_event(&mut self.stream, CliEvent::Raw { bytes: bytes.into() }).await.unwrap();
-                                //         }
-                                //         StdinState::Popup => {
-                                //             debug!("IO: IO Event(RawInput) - sending to popup");
-                                //             self.popup_handle.send_input(bytes).await.unwrap();
-                                //         }
-                                //     }
-                                // }
                                 SwitchSession {session_id} => {
                                     debug!("IO: IO Event(SwitchSession)");
                                     if let Some(session_id) = session_id {
@@ -112,16 +97,15 @@ impl Client {
                                 Ok(event) => {
                                     match event {
                                         DaemonEvent::Raw{bytes} => {
-                                            debug!("IO: DaemonEvent(Raw)");
-                                            stdout.write_all(&bytes).await.unwrap();
-                                            stdout.flush().await.unwrap();
+                                            trace!("IO: DaemonEvent(Raw)");
+                                            stdout.write_all(&bytes).await?;
+                                            stdout.flush().await?;
                                         }
                                         DaemonEvent::SwitchSessionOptions{session_ids} => {
                                             debug!("IO: DaemonEvent(SwitchSessionOptions)");
                                             self.daemon_events_state = DaemonEventsState::Blocked;
                                             self.stdin_state = StdinState::Popup;
-                                            self.popup_handle.send_select_session(session_ids).await.unwrap();
-                                            // todo!();
+                                            self.ui_handle.send_select_session(session_ids).await?;
                                         }
                                     }
                                 }
@@ -135,15 +119,15 @@ impl Client {
                                 Ok(n) if n > 0 => {
                                     match self.stdin_state {
                                         StdinState::Daemon => {
-                                            // self.handle.send_raw_input(Bytes::copy_from_slice(&stdin_buf[..n])).await.unwrap();
-                                            communication::send_event(&mut self.stream, CliEvent::Raw{bytes: stdin_buf[..n].to_vec() }).await.unwrap();
-                                            
+                                            trace!("Sending {n} bytes to Daemon");
+                                            communication::send_event(&mut self.stream, CliEvent::Raw{bytes: stdin_buf[..n].to_vec() }).await?;
+
                                         },
                                         StdinState::Popup => {
-                                            self.popup_tx.send(Bytes::copy_from_slice(&stdin_buf[..n])).await.unwrap();
+                                            trace!("Sending {n} bytes to Popup");
+                                            self.ui_tx.send(Bytes::copy_from_slice(&stdin_buf[..n])).await?;
                                         },
                                     }
-                                    // self.handle.send_raw_input(Bytes::copy_from_slice(&stdin_buf[..n])).await.unwrap()
                                 }
                                 Ok(_) => {
                                     break;
@@ -155,8 +139,11 @@ impl Client {
                         },
                     }
                 }
-                debug!("Gateway stopped");
-            }
+                debug!("Client stopped");
+                disable_raw_mode()?;
+                debug!("Disabled raw mode");
+                Ok(())
+            }.instrument(span)
         });
 
         Ok(task)
@@ -164,13 +151,10 @@ impl Client {
 }
 
 #[derive(Debug, Clone)]
-pub struct IOHandle {
+pub struct ClientHandle {
     tx: mpsc::Sender<ClientEvent>,
 }
-impl IOHandle {
-    // pub async fn send_raw_input(&mut self, bytes: Bytes) -> Result<()> {
-    //     Ok(self.tx.send(ClientEvent::RawInput { bytes }).await?)
-    // }
+impl ClientHandle {
     pub async fn send_switch_session(&mut self, session_id: Option<u32>) -> Result<()> {
         Ok(self
             .tx

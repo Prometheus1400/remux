@@ -1,4 +1,4 @@
-pub mod client;
+pub mod client_connection;
 pub mod pane;
 pub mod pty;
 pub mod session;

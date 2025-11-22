@@ -11,7 +11,6 @@ use tracing_subscriber::{EnvFilter, FmtSubscriber};
 
 use crate::prelude::*;
 
-
 #[tokio::main]
 async fn main() {
     if let Err(e) = setup_logging() {

@@ -5,7 +5,7 @@ use tokio::sync::mpsc;
 
 use crate::{
     actors::{
-        client::ClientConnectionHandle,
+        client_connection::ClientConnectionHandle,
         session::{Session, SessionHandle},
     },
     error::Result,
@@ -115,9 +115,14 @@ impl SessionManager {
                                     .await
                                     .unwrap();
                             }
-                            ClientSwitchSession { client_id, session_id } => {
+                            ClientSwitchSession {
+                                client_id,
+                                session_id,
+                            } => {
                                 debug!("SessionManager: ClientSwitchSession");
-                                self.handle_client_switch_session(client_id, session_id).await.unwrap();
+                                self.handle_client_switch_session(client_id, session_id)
+                                    .await
+                                    .unwrap();
                             }
                             UserInput { client_id, bytes } => {
                                 trace!("SessionManager: UserInput");
@@ -197,7 +202,11 @@ impl SessionManager {
         }
         Ok(())
     }
-    async fn handle_client_switch_session(&mut self, client_id: u32, session_id: u32) -> Result<()> {
+    async fn handle_client_switch_session(
+        &mut self,
+        client_id: u32,
+        session_id: u32,
+    ) -> Result<()> {
         let client_handle = self.unmap_client(client_id).unwrap();
         self.map_client(client_id, client_handle, session_id);
         if let Some(session_handle) = self.sessions.get(&session_id) {

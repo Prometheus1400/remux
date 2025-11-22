@@ -38,7 +38,7 @@ pub struct Session {
     window_handle: WindowHandle,
 }
 impl Session {
-    #[instrument(skip(session_manager_handle), fields(session_id, id))]
+    #[instrument(skip(session_manager_handle), fields(session_id = id))]
     pub fn spawn(id: u32, session_manager_handle: SessionManagerHandle) -> Result<SessionHandle> {
         let session = Session::new(id, session_manager_handle);
         session.run()
@@ -97,7 +97,8 @@ impl Session {
                         }
                     }
                 }
-            }.instrument(span)
+            }
+            .instrument(span)
         });
 
         Ok(handle_clone)

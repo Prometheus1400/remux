@@ -93,7 +93,8 @@ impl Window {
                         }
                     }
                 }
-            }.instrument(span)
+            }
+            .instrument(span)
         });
 
         Ok(handle_clone)
