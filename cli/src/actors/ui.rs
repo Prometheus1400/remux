@@ -1,4 +1,4 @@
 
 
-pub enum UIEvent {
+pub enum UiEvent {
 }
