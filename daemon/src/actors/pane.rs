@@ -1,4 +1,5 @@
 use bytes::Bytes;
+use crossterm::terminal;
 use handle_macro::Handle;
 use tokio::sync::mpsc;
 use tracing::Instrument;
@@ -8,7 +9,7 @@ use crate::{
         pty::{Pty, PtyHandle},
         window::WindowHandle,
     },
-    control_signals::CLEAR,
+    control_signals::{CLEAR},
     prelude::*,
 };
 
@@ -31,6 +32,7 @@ pub enum PaneState {
 }
 
 pub struct Pane {
+    id: usize,
     handle: PaneHandle,
     window_handle: WindowHandle,
     rx: mpsc::Receiver<PaneEvent>,
@@ -42,17 +44,23 @@ pub struct Pane {
 }
 impl Pane {
     #[instrument(skip(window_handle))]
-    pub fn spawn(window_handle: WindowHandle) -> Result<PaneHandle> {
-        let pane = Pane::new(window_handle)?;
+    pub fn spawn(window_handle: WindowHandle, id: usize) -> Result<PaneHandle> {
+        let pane = Pane::new(window_handle, id)?;
         pane.run()
     }
     #[instrument(skip(window_handle))]
-    fn new(window_handle: WindowHandle) -> Result<Self> {
+    fn new(window_handle: WindowHandle, id: usize) -> Result<Self> {
         let (tx, rx) = mpsc::channel(10);
         let handle = PaneHandle { tx };
-        let vte = vt100::Parser::default();
-        let pty_handle = Pty::spawn(handle.clone())?;
+
+        let (cols, rows) = match terminal::size() {
+            Ok((c, r)) => (c, r),
+            Err(_) => (80, 24)
+        };
+        let vte = vt100::Parser::new(rows, cols, 0);
+        let pty_handle = Pty::spawn(handle.clone(), rows, cols)?;
         Ok(Self {
+            id,
             handle,
             window_handle,
             pty_handle,

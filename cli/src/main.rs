@@ -4,7 +4,10 @@ mod error;
 mod prelude;
 mod widgets;
 
+use std::io::stdout;
+
 use clap::Parser;
+use crossterm::{execute, terminal::{EnterAlternateScreen, LeaveAlternateScreen}};
 use ratatui::crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use remux_core::{
     communication,
@@ -103,6 +106,7 @@ async fn attach(mut stream: UnixStream, attach_message: RequestMessage) -> Resul
             source,
         })?;
     debug!("Sent attach request successfully");
+    execute!(stdout(), EnterAlternateScreen)?;
     enable_raw_mode()?;
     debug!("raw mode enabled");
     if let Ok(task) = Client::spawn(stream) {
@@ -117,6 +121,7 @@ async fn attach(mut stream: UnixStream, attach_message: RequestMessage) -> Resul
         }
     }
     disable_raw_mode()?;
+    execute!(stdout(), LeaveAlternateScreen)?;
     debug!("Disabled raw mode");
     Ok(())
 }

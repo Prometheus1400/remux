@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use bytes::Bytes;
 use handle_macro::Handle;
 use tokio::sync::mpsc;
@@ -31,19 +33,29 @@ pub struct Window {
     session_handle: SessionHandle,
     handle: WindowHandle,
     rx: mpsc::Receiver<WindowEvent>,
-    pane_handle: PaneHandle, // TODO: handle more panes
+
+    panes: HashMap<usize, PaneHandle>,
+    active_pane_id: usize,
+    next_pane_id: usize,
+
     #[allow(unused)]
     window_state: WindowState,
 }
 impl Window {
     async fn handle_user_input(&mut self, bytes: Bytes) -> Result<()> {
-        self.pane_handle.user_input(bytes).await
+        if let Some(pane) = self.panes.get(&self.active_pane_id) {
+            pane.user_input(bytes).await?;
+        }
+        Ok(())
     }
     async fn handle_pane_output(&mut self, bytes: Bytes) -> Result<()> {
         self.session_handle.window_output(bytes).await
     }
     async fn handle_redraw(&mut self) -> Result<()> {
-        self.pane_handle.rerender().await
+        if let Some(pane) = self.panes.get(&self.active_pane_id) {
+            pane.rerender().await?;
+        }
+        Ok(())
     }
 }
 impl Window {
@@ -56,12 +68,18 @@ impl Window {
     fn new(session_handle: SessionHandle) -> Result<Self> {
         let (tx, rx) = mpsc::channel(10);
         let handle = WindowHandle { tx };
-        let pane_handle = Pane::spawn(handle.clone())?;
+
+        let init_pane_id = 1;
+        let pane_handle = Pane::spawn(handle.clone(), init_pane_id)?;
+        let mut panes = HashMap::new();
+        panes.insert(init_pane_id, pane_handle);
         Ok(Self {
             session_handle,
             handle,
             rx,
-            pane_handle,
+            panes,
+            active_pane_id: init_pane_id,
+            next_pane_id: init_pane_id + 1,
             window_state: WindowState::Focused,
         })
     }
@@ -88,7 +106,9 @@ impl Window {
                             }
                             Kill => {
                                 debug!("Window: Kill");
-                                self.pane_handle.kill().await.unwrap();
+                                for pane in self.panes.values() {
+                                    pane.kill().await.unwrap();
+                                }
                                 break;
                             }
                         }

@@ -7,6 +7,7 @@ edition = "2024"
 
 [workspace.dependencies]
 bytes = { version = "1.11.0" }
+crossterm = "0.29.0"
 derive_more = { version = "2", features = ["display"] }
 itertools = { version = "0.14" }
 serde = { version = "1.0", features = ["derive"] }

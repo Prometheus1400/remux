@@ -1,16 +1,15 @@
 use std::{
     ffi::CString,
-    os::fd::{AsRawFd, OwnedFd},
+    os::fd::{AsRawFd, OwnedFd, RawFd},
 };
 
 use bytes::Bytes;
 use handle_macro::Handle;
 use nix::{
     errno::Errno,
-    libc::{F_GETFL, F_SETFL, O_NONBLOCK, fcntl},
+    libc::{F_GETFL, F_SETFL, O_NONBLOCK, TIOCSWINSZ, fcntl, ioctl},
     pty::{
-        ForkptyResult::{Child, Parent},
-        forkpty,
+        ForkptyResult::{Child, Parent}, Winsize, forkpty
     },
     sys::{
         signal::{Signal, kill},
@@ -38,16 +37,18 @@ pub struct Pty {
     pty_tx: mpsc::UnboundedSender<Bytes>,
     pty_rx: mpsc::UnboundedReceiver<Bytes>,
     pane_handle: PaneHandle,
+    rows: u16,
+    cols: u16,
 }
 impl Pty {
     #[instrument(skip(pane_handle))]
-    pub fn spawn(pane_handle: PaneHandle) -> Result<PtyHandle> {
-        let pty = Pty::new(pane_handle);
+    pub fn spawn(pane_handle: PaneHandle, rows: u16, cols: u16) -> Result<PtyHandle> {
+        let pty = Pty::new(pane_handle, rows, cols);
         pty.run()
     }
 
     #[instrument(skip(pane_handle))]
-    fn new(pane_handle: PaneHandle) -> Self {
+    fn new(pane_handle: PaneHandle, rows: u16, cols: u16) -> Self {
         let (tx, rx) = mpsc::channel::<PtyEvent>(10);
         let (pty_tx, pty_rx) = mpsc::unbounded_channel::<Bytes>();
         Self {
@@ -56,6 +57,8 @@ impl Pty {
             pty_tx,
             pty_rx,
             pane_handle,
+            rows,
+            cols,
         }
     }
 
@@ -75,6 +78,7 @@ impl Pty {
                     tx: self.tx.clone(),
                 };
                 let async_fd = AsyncFd::new(master)?;
+                set_winsize(async_fd.get_ref().as_raw_fd(), self.rows, self.cols)?;
                 let _task: DaemonTask = tokio::spawn({
                     let handler = handle.clone();
                     async move {
@@ -176,6 +180,17 @@ impl Pty {
         info!("killing pty child process {child}");
         Ok(())
     }
+}
+
+fn set_winsize(fd: RawFd, rows: u16, cols: u16) -> Result<()> {
+    let ws = Winsize {
+        ws_row: rows,
+        ws_col: cols,
+        ws_xpixel: 0, // unused
+        ws_ypixel: 0, // unused
+    };
+    unsafe { ioctl(fd, TIOCSWINSZ, &ws) };
+    Ok(())
 }
 
 fn set_fd_nonblocking(owned_fd: &OwnedFd) -> Result<()> {
