@@ -1,6 +1,7 @@
 use bytes::Bytes;
 use crossterm::terminal;
 use handle_macro::Handle;
+use regex::Regex;
 use tokio::sync::mpsc;
 use tracing::Instrument;
 
@@ -8,9 +9,7 @@ use crate::{
     actors::{
         pty::{Pty, PtyHandle},
         window::WindowHandle,
-    },
-    control_signals::{CLEAR},
-    prelude::*,
+    }, control_signals::CLEAR, layout::Rect, prelude::*
 };
 
 #[derive(Handle)]
@@ -41,24 +40,21 @@ pub struct Pane {
     // vte related
     vte: vt100::Parser,
     prev_screen_state: Option<vt100::Screen>,
+    rect: Rect,
 }
 impl Pane {
     #[instrument(skip(window_handle))]
-    pub fn spawn(window_handle: WindowHandle, id: usize) -> Result<PaneHandle> {
-        let pane = Pane::new(window_handle, id)?;
+    pub fn spawn(window_handle: WindowHandle, id: usize, rect: Rect) -> Result<PaneHandle> {
+        let pane = Pane::new(window_handle, id, rect)?;
         pane.run()
     }
     #[instrument(skip(window_handle))]
-    fn new(window_handle: WindowHandle, id: usize) -> Result<Self> {
+    fn new(window_handle: WindowHandle, id: usize, rect: Rect) -> Result<Self> {
         let (tx, rx) = mpsc::channel(10);
         let handle = PaneHandle { tx };
 
-        let (cols, rows) = match terminal::size() {
-            Ok((c, r)) => (c, r),
-            Err(_) => (80, 24)
-        };
-        let vte = vt100::Parser::new(rows, cols, 0);
-        let pty_handle = Pty::spawn(handle.clone(), rows, cols)?;
+        let vte = vt100::Parser::new(rect.height, rect.width, 0);
+        let pty_handle = Pty::spawn(handle.clone(), rect.height, rect.width)?;
         Ok(Self {
             id,
             handle,
@@ -68,6 +64,7 @@ impl Pane {
             vte,
             pane_state: PaneState::Visible,
             prev_screen_state: None,
+            rect,
         })
     }
     #[instrument(skip(self))]
@@ -85,7 +82,10 @@ impl Pane {
                             }
                             PtyOutput { bytes } => {
                                 trace!("Pane: PtyOutput({bytes:?}");
-                                self.handle_pty_output(bytes).await.unwrap();
+                                match self.handle_pty_output(bytes).await {
+                                    Ok(_) => (),
+                                    Err(e) => error!("{}", e)
+                                }
                             }
                             PtyDied => {
                                 debug!("Pane: PtyDied");
@@ -99,7 +99,10 @@ impl Pane {
                             }
                             Render => {
                                 trace!("Pane: Render");
-                                self.handle_render().await.unwrap();
+                                match self.handle_rerender().await {
+                                    Ok(_) => (),
+                                    Err(e) => error!("{}", e)
+                                }
                             }
                             Rerender => {
                                 debug!("Pane: Rerender");
@@ -130,31 +133,58 @@ impl Pane {
 
     async fn handle_pty_output(&mut self, bytes: Bytes) -> Result<()> {
         self.vte.process(&bytes);
-        self.handle.render().await
+        self.handle.rerender().await
     }
 
-    async fn handle_render(&mut self) -> Result<()> {
-        match &self.prev_screen_state {
-            Some(prev) => {
-                let cur_screen_state = self.vte.screen().clone();
-                let diff = cur_screen_state.state_diff(prev);
-                self.prev_screen_state = Some(cur_screen_state);
-                Ok(self
-                    .window_handle
-                    .pane_output(Bytes::copy_from_slice(&diff))
-                    .await?)
-            }
-            None => self.handle_rerender().await,
-        }
-    }
+    // async fn handle_render(&mut self) -> Result<()> {
+    //     match &self.prev_screen_state {
+    //         Some(prev) => {
+    //             let cur_screen_state = self.vte.screen().clone();
+    //             let diff = cur_screen_state.state_diff(prev);
+    //             self.prev_screen_state = Some(cur_screen_state);
+    //             Ok(self
+    //                 .window_handle
+    //                 .pane_output(Bytes::copy_from_slice(&diff))
+    //                 .await?)
+    //         }
+    //         None => self.handle_rerender().await,
+    //     }
+    // }
 
     async fn handle_rerender(&mut self) -> Result<()> {
-        let cur_screen_state = self.vte.screen().clone();
-        self.prev_screen_state = Some(cur_screen_state);
+        let screen = self.vte.screen();
+        let (rows, cols) = screen.size();
 
-        let new_state = self.vte.screen().state_formatted();
-        let output = CLEAR.iter().chain(new_state.iter()).copied().collect();
-        self.window_handle.pane_output(output).await
+        debug!("RERENDER -- id: {} size {:?}", self.id, screen.size());
+        self.prev_screen_state = Some(screen.clone());
+        let mut output = Vec::new();
+
+
+        for (i, row) in screen.rows_formatted(0, self.rect.width).enumerate() {
+            let cx = self.rect.x + 1;
+            let cy = self.rect.y + 1 + (i as u16);
+
+            let move_cursor = format!("\x1b[{};{}H", cy, cx);
+            output.extend_from_slice(move_cursor.as_bytes());
+
+            let erase_chars = format!("\x1b[{}X", self.rect.width);
+            output.extend_from_slice(erase_chars.as_bytes());
+
+            output.extend_from_slice(&row);
+        }
+
+        output.extend_from_slice(b"\x1b[0m");
+
+        let (c_row, c_col) = screen.cursor_position();
+        let global_x = self.rect.x + 1 + c_col;
+        let global_y = self.rect.y + 1 + c_row;
+
+        // 3. Send it all to the Window
+        self.window_handle.pane_output(
+            self.id,
+            Bytes::from(output),
+            Some((global_x, global_y))
+        ).await
         // TODO : todo!("don't need to send this when pane is hidden");
         // match self.state {
         //     PaneState::Visible => {

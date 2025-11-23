@@ -88,6 +88,9 @@ impl LayoutNode {
                             ..area
                         };
 
+                        debug!("left: {:?} left rect: {:?}", left, left_rect);
+                        debug!("right: {:?} right rect: {:?}", right, right_rect);
+
                         left.calculate_layout(left_rect, results)?;
                         right.calculate_layout(right_rect, results)?;
                         Ok(())
