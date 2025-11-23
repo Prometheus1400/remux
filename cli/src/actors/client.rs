@@ -1,6 +1,4 @@
 use bytes::Bytes;
-use crossterm::terminal::disable_raw_mode;
-use ratatui::crossterm::terminal::enable_raw_mode;
 use remux_core::{
     communication,
     events::{CliEvent, DaemonEvent},
@@ -13,7 +11,7 @@ use tokio::{
 use tracing::{Instrument, debug};
 
 use crate::{
-    actors::ui::{Ui, UiHandle},
+    actors::{WidgetRunner, widget_runner::WidgetRunnerHandle},
     prelude::*,
 };
 
@@ -37,13 +35,14 @@ enum DaemonEventsState {
 
 #[derive(Debug)]
 pub struct Client {
-    stream: UnixStream,                     // the client owns the stream
-    handle: ClientHandle,                   // handle used to send the client events
-    rx: mpsc::Receiver<ClientEvent>,        // receiver for client events
-    ui_handle: UiHandle,                    // handle used to send the popup actor events
-    stdin_state: StdinState,                // for routing stdin to daemon or popup actor
+    stream: UnixStream,              // the client owns the stream
+    handle: ClientHandle,            // handle used to send the client events
+    rx: mpsc::Receiver<ClientEvent>, // receiver for client events
+    // ui_handle: UiHandle,                    // handle used to send the popup actor events
+    stdin_state: StdinState, // for routing stdin to daemon or popup actor
     daemon_events_state: DaemonEventsState, // determines if currently accepting events from daemon
-    ui_tx: mpsc::Sender<Bytes>,             // this is for popup actor to connect to stdin
+    stdin_tx: mpsc::Sender<Bytes>, // this is for popup actor to connect to stdin
+    widget_runner: WidgetRunnerHandle,
 }
 impl Client {
     #[instrument(skip(stream))]
@@ -54,17 +53,17 @@ impl Client {
     #[instrument(skip(stream))]
     fn new(stream: UnixStream) -> Result<Self> {
         let (tx, rx) = mpsc::channel(100);
-        let (ui_tx, popup_rx) = mpsc::channel(100);
+        let (stdin_tx, stdin_rx) = mpsc::channel(100);
         let handle = ClientHandle { tx };
-        let popup_handle = Ui::spawn(popup_rx, handle.clone())?;
+        let widget_runner = WidgetRunner::spawn(stdin_rx, handle.clone())?;
         Ok(Self {
+            stream,
             handle,
             rx,
-            stream,
-            ui_handle: popup_handle,
             stdin_state: StdinState::Daemon,
             daemon_events_state: DaemonEventsState::Unblocked,
-            ui_tx,
+            stdin_tx,
+            widget_runner,
         })
     }
 
@@ -103,7 +102,7 @@ impl Client {
                                             debug!("DaemonEvent(SwitchSessionOptions({session_ids:?}))");
                                             self.daemon_events_state = DaemonEventsState::Blocked;
                                             self.stdin_state = StdinState::Popup;
-                                            self.ui_handle.select_session(session_ids).await?;
+                                            self.widget_runner.select_session(session_ids).await?;
                                         }
                                     }
                                 }
@@ -124,7 +123,7 @@ impl Client {
                                         },
                                         StdinState::Popup => {
                                             trace!("Sending {n} bytes to Popup");
-                                            self.ui_tx.send(Bytes::copy_from_slice(&stdin_buf[..n])).await?;
+                                            self.stdin_tx.send(Bytes::copy_from_slice(&stdin_buf[..n])).await?;
                                         },
                                     }
                                 }

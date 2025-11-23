@@ -20,3 +20,4 @@ tracing.workspace = true
 clap = { version = "4.5.51", features = ["derive"] }
 ratatui = { version = "0.28.1", features = ["crossterm"] }
 terminput = "0.5.11"
+mlua = { version = "0.11.4", features = ["lua54", "module", "serde", "async"] }

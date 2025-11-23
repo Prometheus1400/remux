@@ -3,7 +3,7 @@ use remux_core::messages::RequestMessage;
 use thiserror::Error;
 use tokio::sync::mpsc::error::SendError;
 
-use crate::actors::{client::ClientEvent, ui::UiEvent};
+use crate::actors::{client::ClientEvent, widget_runner::WidgetRunnerEvent};
 
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -44,10 +44,10 @@ pub enum Error {
 pub enum EventSendError {
     #[error("IO send error: {0}")]
     IO(SendError<ClientEvent>),
-    #[error("Popup send error: {0}")]
-    UI(SendError<UiEvent>),
     #[error("Bytes send error: {0}")]
     Bytes(SendError<Bytes>),
+    #[error("WidgetRunner send error: {0}")]
+    WidgetRunner(SendError<WidgetRunnerEvent>)
 }
 
 impl From<SendError<ClientEvent>> for Error {
@@ -55,13 +55,14 @@ impl From<SendError<ClientEvent>> for Error {
         Self::EventSend(EventSendError::IO(e))
     }
 }
-impl From<SendError<UiEvent>> for Error {
-    fn from(e: SendError<UiEvent>) -> Self {
-        Self::EventSend(EventSendError::UI(e))
-    }
-}
+
 impl From<SendError<Bytes>> for Error {
     fn from(e: SendError<Bytes>) -> Self {
         Self::EventSend(EventSendError::Bytes(e))
+    }
+}
+impl From<SendError<WidgetRunnerEvent>> for Error {
+    fn from(e: SendError<WidgetRunnerEvent>) -> Self {
+        Self::EventSend(EventSendError::WidgetRunner(e))
     }
 }
