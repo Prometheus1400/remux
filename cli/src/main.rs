@@ -20,7 +20,7 @@ use remux_core::{
 use tokio::net::UnixStream;
 
 use crate::{
-    actors::client::Client,
+    actors::Client,
     args::{Args, Commands, SessionCommands},
     error::{Error, Result},
     prelude::*,
