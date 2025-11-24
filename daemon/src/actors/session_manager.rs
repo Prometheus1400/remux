@@ -284,11 +284,6 @@ impl SessionManager {
             .or_insert(vec![]);
         clients.push(client_id);
         self.client_to_session_mapping.insert(client_id, session_id);
-
-        // let session_handle = self
-        //     .sessions
-        //     .get_mut(&session_id)
-        //     .expect("session should exist here");
         Ok(())
     }
 
