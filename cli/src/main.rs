@@ -110,7 +110,6 @@ async fn attach(mut stream: UnixStream, attach_message: RequestMessage) -> Resul
             source,
         })?;
     debug!("Sent attach request successfully");
-    execute!(stdout(), EnterAlternateScreen)?;
     enable_raw_mode()?;
     debug!("raw mode enabled");
     if let Ok(task) = Client::spawn(stream) {
@@ -125,7 +124,6 @@ async fn attach(mut stream: UnixStream, attach_message: RequestMessage) -> Resul
         }
     }
     disable_raw_mode()?;
-    execute!(stdout(), LeaveAlternateScreen)?;
     debug!("Disabled raw mode");
     Ok(())
 }

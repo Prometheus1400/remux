@@ -21,6 +21,8 @@ pub enum ClientConnectionEvent {
     FailedAttachToSession { session_id: u32 },
     DetachFromSession { session_id: u32 },
     SessionOutput { bytes: Bytes },
+    NewSession(u32),
+    CurrentSessions(Vec<u32>),
 }
 use ClientConnectionEvent::*;
 
@@ -84,6 +86,7 @@ impl ClientConnection {
                                 SuccessAttachToSession{session_id} => {
                                     debug!("Client: SuccessAttachToSession");
                                     self.state = ClientConnectionState::Attached(session_id);
+                                    communication::send_event(&mut self.stream, DaemonEvent::ActiveSession(session_id)).await.unwrap();
                                 }
                                 FailedAttachToSession{..} => {
                                     debug!("Client: FailedAttachToSession");
@@ -105,6 +108,14 @@ impl ClientConnection {
                                 SessionOutput{bytes} => {
                                     trace!("Client: SessionOutput");
                                     communication::send_event(&mut self.stream, DaemonEvent::Raw{bytes: bytes.into()}).await.unwrap();
+                                }
+                                NewSession(session_id) => {
+                                    trace!("Client: NewSession");
+                                    communication::send_event(&mut self.stream, DaemonEvent::NewSession(session_id)).await.unwrap();
+                                }
+                                CurrentSessions(session_ids) => {
+                                    trace!("Client: NewSession");
+                                    communication::send_event(&mut self.stream, DaemonEvent::CurrentSessions(session_ids)).await.unwrap();
                                 }
                             }
                         },

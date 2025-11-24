@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use bytes::Bytes;
 use remux_core::{
     communication,
@@ -6,13 +8,18 @@ use remux_core::{
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::UnixStream,
-    sync::mpsc,
+    sync::mpsc, time::interval,
 };
 use tracing::{Instrument, debug};
 
 use crate::{
-    actors::{WidgetRunner, ui::{UI, UIHandle}, widget_runner::WidgetRunnerHandle},
+    actors::{
+        WidgetRunner,
+        ui::{UI, UIHandle},
+        widget_runner::WidgetRunnerHandle,
+    },
     prelude::*,
+    state_view::StateView,
 };
 
 #[derive(Debug)]
@@ -44,6 +51,7 @@ pub struct Client {
     stdin_tx: mpsc::Sender<Bytes>, // this is for popup actor to connect to stdin
     widget_runner_handle: WidgetRunnerHandle,
     ui_handle: UIHandle,
+    state_view: StateView,
 }
 impl Client {
     #[instrument(skip(stream))]
@@ -66,7 +74,8 @@ impl Client {
             daemon_events_state: DaemonEventsState::Unblocked,
             stdin_tx,
             widget_runner_handle,
-            ui_handle
+            ui_handle,
+            state_view: StateView::default(),
         })
     }
 
@@ -78,6 +87,7 @@ impl Client {
             let mut stdin_buf = [0u8; 1024];
             let mut stdout = tokio::io::stdout();
             async move {
+                let mut ticker = interval(Duration::from_millis(1000));
                 loop {
                     tokio::select! {
                         Some(event) = self.rx.recv() => {
@@ -87,6 +97,7 @@ impl Client {
                                     if let Some(session_id) = session_id {
                                         communication::send_event(&mut self.stream, CliEvent::SwitchSession { session_id }).await.unwrap();
                                     }
+                                    self.ui_handle.clear_terminal().await?;
                                     self.daemon_events_state = DaemonEventsState::Unblocked;
                                     self.stdin_state = StdinState::Daemon;
                                 }
@@ -107,6 +118,21 @@ impl Client {
                                             self.daemon_events_state = DaemonEventsState::Blocked;
                                             self.stdin_state = StdinState::Popup;
                                             self.widget_runner_handle.select_session(session_ids).await?;
+                                        }
+                                        DaemonEvent::CurrentSessions(session_ids) => {
+                                            debug!("DaemonEvent(CurrentSessions({session_ids:?}))");
+                                            self.state_view.set_sessions(session_ids);
+                                        }
+                                        DaemonEvent::ActiveSession(session_id) => {
+                                            debug!("DaemonEvent(ActiveSession({session_id}))");
+                                            self.state_view.set_active_session(session_id);
+                                        }
+                                        DaemonEvent::NewSession(session_id) => {
+                                            debug!("DaemonEvent(NewSession({session_id}))");
+                                            self.state_view.add_session(session_id);
+                                        }
+                                        DaemonEvent::DeletedSession(session_id) => {
+                                            todo!("implement delete session");
                                         }
                                     }
                                 }
@@ -140,6 +166,10 @@ impl Client {
                                 }
                             }
                         },
+                        _ = ticker.tick() => {
+                            // TODO: make this event driven instead of on timer
+                            self.ui_handle.sync_state_view(self.state_view.clone()).await?;
+                        }
                     }
                 }
                 debug!("Client stopped");
