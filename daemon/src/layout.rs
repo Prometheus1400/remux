@@ -33,12 +33,7 @@ pub enum LayoutNode {
     },
 }
 impl LayoutNode {
-    pub fn add_split(
-        &mut self,
-        target_id: usize,
-        new_id: usize,
-        direction: SplitDirection,
-    ) -> bool {
+    pub fn add_split(&mut self, target_id: usize, new_id: usize, direction: SplitDirection) -> bool {
         match self {
             LayoutNode::Pane { id } => {
                 if *id == target_id {

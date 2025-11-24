@@ -17,7 +17,7 @@ pub enum PaneEvent {
     UserInput { bytes: Bytes },
     PtyOutput { bytes: Bytes },
     PtyDied,
-    Render, // uses the diff from prev state to get to desired state (falls back to rerender if no prev state)
+    Render,   // uses the diff from prev state to get to desired state (falls back to rerender if no prev state)
     Rerender, // full rerender
     Resize { rect: Rect },
     Hide,
@@ -150,11 +150,7 @@ impl Pane {
                 let global_y = self.rect.y + 1 + c_row;
                 Ok(self
                     .window_handle
-                    .pane_output(
-                        self.id,
-                        Bytes::copy_from_slice(&diff),
-                        Some((global_x, global_y)),
-                    )
+                    .pane_output(self.id, Bytes::copy_from_slice(&diff), Some((global_x, global_y)))
                     .await?)
             }
             None => self.handle_rerender().await,

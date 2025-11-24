@@ -67,12 +67,7 @@ impl Window {
         }
         Ok(())
     }
-    async fn handle_pane_output(
-        &mut self,
-        id: usize,
-        bytes: Bytes,
-        cursor: Option<(u16, u16)>,
-    ) -> Result<()> {
+    async fn handle_pane_output(&mut self, id: usize, bytes: Bytes, cursor: Option<(u16, u16)>) -> Result<()> {
         if let Some(pos) = cursor {
             self.pane_cursors.insert(id, pos);
         }
@@ -81,9 +76,7 @@ impl Window {
 
         if let Some(&(active_x, active_y)) = self.pane_cursors.get(&self.active_pane_id) {
             let restore_cursor = format!("\x1b[{};{}H", active_y, active_x);
-            self.session_handle
-                .window_output(Bytes::from(restore_cursor))
-                .await?;
+            self.session_handle.window_output(Bytes::from(restore_cursor)).await?;
         }
 
         Ok(())
@@ -101,10 +94,7 @@ impl Window {
         }
         ids.sort();
 
-        let current_idx = ids
-            .iter()
-            .position(|&id| id == self.active_pane_id)
-            .unwrap_or(0);
+        let current_idx = ids.iter().position(|&id| id == self.active_pane_id).unwrap_or(0);
 
         let new_idx = if is_next {
             (current_idx + 1) % ids.len()
@@ -130,15 +120,12 @@ impl Window {
         };
 
         let move_cursor = format!("\x1b[{};{}H", ty, tx);
-        self.session_handle
-            .window_output(Bytes::from(move_cursor))
-            .await?;
+        self.session_handle.window_output(Bytes::from(move_cursor)).await?;
 
         Ok(())
     }
     async fn handle_split_pane(&mut self, direction: SplitDirection) -> Result<()> {
-        self.layout
-            .add_split(self.active_pane_id, self.next_pane_id, direction);
+        self.layout.add_split(self.active_pane_id, self.next_pane_id, direction);
         self.layout
             .calculate_layout(self.root_rect, &mut self.layout_sizing_map)?;
 

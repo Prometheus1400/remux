@@ -49,9 +49,9 @@ pub struct Client {
     handle: ClientHandle,            // handle used to send the client events
     rx: mpsc::Receiver<ClientEvent>, // receiver for client events
     // ui_handle: UiHandle,                    // handle used to send the popup actor events
-    stdin_state: StdinState, // for routing stdin to daemon or popup actor
+    stdin_state: StdinState,                // for routing stdin to daemon or popup actor
     daemon_events_state: DaemonEventsState, // determines if currently accepting events from daemon
-    stdin_tx: mpsc::Sender<Bytes>, // this is for popup actor to connect to stdin
+    stdin_tx: mpsc::Sender<Bytes>,          // this is for popup actor to connect to stdin
     widget_runner_handle: WidgetRunnerHandle,
     ui_handle: UIHandle,
     state_view: StateView,
