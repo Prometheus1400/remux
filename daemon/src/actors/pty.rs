@@ -21,13 +21,13 @@ use nix::{
 use tokio::{io::unix::AsyncFd, sync::mpsc};
 use tracing::Instrument;
 
-use crate::{actors::pane::PaneHandle, prelude::*};
+use crate::{actors::pane::PaneHandle, layout::Rect, prelude::*};
 
 #[derive(Debug, Clone, Handle)]
 pub enum PtyEvent {
     Kill,
     Input { bytes: Bytes },
-    Resize { rows: u16, cols: u16 },
+    Resize { rect: Rect },
 }
 use PtyEvent::*;
 
@@ -39,18 +39,17 @@ pub struct Pty {
     pty_tx: mpsc::UnboundedSender<Bytes>,
     pty_rx: mpsc::UnboundedReceiver<Bytes>,
     pane_handle: PaneHandle,
-    rows: u16,
-    cols: u16,
+    rect: Rect,
 }
 impl Pty {
     #[instrument(skip(pane_handle))]
-    pub fn spawn(pane_handle: PaneHandle, rows: u16, cols: u16) -> Result<PtyHandle> {
-        let pty = Pty::new(pane_handle, rows, cols);
+    pub fn spawn(pane_handle: PaneHandle, rect: Rect) -> Result<PtyHandle> {
+        let pty = Pty::new(pane_handle, rect);
         pty.run()
     }
 
     #[instrument(skip(pane_handle))]
-    fn new(pane_handle: PaneHandle, rows: u16, cols: u16) -> Self {
+    fn new(pane_handle: PaneHandle, rect: Rect) -> Self {
         let (tx, rx) = mpsc::channel::<PtyEvent>(10);
         let (pty_tx, pty_rx) = mpsc::unbounded_channel::<Bytes>();
         Self {
@@ -59,8 +58,7 @@ impl Pty {
             pty_tx,
             pty_rx,
             pane_handle,
-            rows,
-            cols,
+            rect,
         }
     }
 
@@ -76,9 +74,15 @@ impl Pty {
             Parent { child, master } => {
                 debug!("child PID: {}", child.as_raw());
                 set_fd_nonblocking(&master)?;
-                let handle = PtyHandle { tx: self.tx.clone() };
+                let handle = PtyHandle {
+                    tx: self.tx.clone(),
+                };
                 let async_fd = AsyncFd::new(master)?;
-                set_winsize(async_fd.get_ref().as_raw_fd(), self.rows, self.cols)?;
+                set_winsize(
+                    async_fd.get_ref().as_raw_fd(),
+                    self.rect.height,
+                    self.rect.width,
+                )?;
                 let _task: DaemonTask = tokio::spawn({
                     let handler = handle.clone();
                     async move {
@@ -136,9 +140,9 @@ impl Pty {
                                             trace!("Pty: Input({bytes:?}");
                                             self.handle_input(bytes.clone())
                                         },
-                                        Resize { rows, cols } => {
+                                        Resize { rect } => {
                                             debug!("Pty: Resize");
-                                            self.handle_resize(async_fd.get_ref().as_raw_fd(), rows, cols)
+                                            self.handle_resize(async_fd.get_ref().as_raw_fd(), rect)
                                         }
                                     };
                                     if let Err(e) = res {
@@ -163,7 +167,9 @@ impl Pty {
                             Err(err) => error!("waitpid failed: {}", err),
                         }
                         debug!("stopping PtyProcess run");
-                        self.pane_handle.pty_died().await.unwrap();
+                        if let Err(e) = self.pane_handle.pty_died().await {
+                            warn!("Could not notify pane that PTY died (Pane has likely already died) {}", e);
+                        }
                         Ok(())
                     }.instrument(span)
                 });
@@ -185,8 +191,9 @@ impl Pty {
         Ok(())
     }
 
-    fn handle_resize(&mut self, raw_fd: RawFd, rows: u16, cols: u16) -> Result<()> {
-        set_winsize(raw_fd, rows, cols)?;
+    fn handle_resize(&mut self, raw_fd: RawFd, rect: Rect) -> Result<()> {
+        self.rect = rect;
+        set_winsize(raw_fd, rect.height, rect.width)?;
         Ok(())
     }
 }

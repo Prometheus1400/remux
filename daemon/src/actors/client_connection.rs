@@ -42,7 +42,10 @@ pub struct ClientConnection {
 }
 impl ClientConnection {
     #[instrument(skip(stream, session_manager_handle))]
-    pub fn spawn(stream: UnixStream, session_manager_handle: SessionManagerHandle) -> Result<ClientConnectionHandle> {
+    pub fn spawn(
+        stream: UnixStream,
+        session_manager_handle: SessionManagerHandle,
+    ) -> Result<ClientConnectionHandle> {
         let client = Self::new(stream, session_manager_handle);
         client.run()
     }

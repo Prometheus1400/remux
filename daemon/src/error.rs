@@ -2,8 +2,8 @@ use thiserror::Error;
 use tokio::sync::mpsc::error::SendError;
 
 use crate::actors::{
-    client_connection::ClientConnectionEvent, pane::PaneEvent, pty::PtyEvent, session::SessionEvent,
-    session_manager::SessionManagerEvent, window::WindowEvent,
+    client_connection::ClientConnectionEvent, pane::PaneEvent, pty::PtyEvent,
+    session::SessionEvent, session_manager::SessionManagerEvent, window::WindowEvent,
 };
 
 pub type Result<T> = std::result::Result<T, Error>;

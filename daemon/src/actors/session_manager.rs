@@ -106,9 +106,14 @@ impl SessionManager {
                                 create_session,
                             } => {
                                 debug!("SessionManager: ClientConnect");
-                                self.handle_client_connect(client_id, client_handle, session_id, create_session)
-                                    .await
-                                    .unwrap();
+                                self.handle_client_connect(
+                                    client_id,
+                                    client_handle,
+                                    session_id,
+                                    create_session,
+                                )
+                                .await
+                                .unwrap();
                             }
                             ClientDisconnect { client_id } => {
                                 debug!("SessionManager: ClientDisconnect");
@@ -116,23 +121,39 @@ impl SessionManager {
                             }
                             ClientRequestSwitchSession { client_id } => {
                                 debug!("SessionManager: ClientRequestSwitchSession");
-                                self.handle_client_request_switch_session(client_id).await.unwrap();
+                                self.handle_client_request_switch_session(client_id)
+                                    .await
+                                    .unwrap();
                             }
-                            ClientSwitchSession { client_id, session_id } => {
+                            ClientSwitchSession {
+                                client_id,
+                                session_id,
+                            } => {
                                 debug!("SessionManager: ClientSwitchSession");
-                                self.handle_client_switch_session(client_id, session_id).await.unwrap();
+                                self.handle_client_switch_session(client_id, session_id)
+                                    .await
+                                    .unwrap();
                             }
                             UserInput { client_id, bytes } => {
                                 trace!("SessionManager: UserInput");
-                                self.handle_client_send_user_input(client_id, bytes).await.unwrap();
+                                self.handle_client_send_user_input(client_id, bytes)
+                                    .await
+                                    .unwrap();
                             }
-                            UserSplitPane { client_id, direction } => {
+                            UserSplitPane {
+                                client_id,
+                                direction,
+                            } => {
                                 debug!("SessionManager: UserSplitPane");
-                                self.handle_client_split_pane(client_id, direction).await.unwrap();
+                                self.handle_client_split_pane(client_id, direction)
+                                    .await
+                                    .unwrap();
                             }
                             UserIteratePane { client_id, is_next } => {
                                 debug!("SessionManager: UserIteratePane");
-                                self.handle_client_iterate_pane(client_id, is_next).await.unwrap();
+                                self.handle_client_iterate_pane(client_id, is_next)
+                                    .await
+                                    .unwrap();
                             }
                             UserKillPane { client_id } => {
                                 debug!("SessionManager: UserKillPane");
@@ -140,7 +161,9 @@ impl SessionManager {
                             }
                             SessionSendOutput { session_id, bytes } => {
                                 trace!("SessionManager: SessionSendOutput");
-                                self.handle_session_send_output(session_id, bytes).await.unwrap();
+                                self.handle_session_send_output(session_id, bytes)
+                                    .await
+                                    .unwrap();
                             }
                         }
                     }
@@ -170,11 +193,17 @@ impl SessionManager {
         }
         // session exists
         self.clients.insert(client_id, client_handle.clone());
-        let clients = self.session_to_client_mapping.entry(session_id).or_insert(vec![]);
+        let clients = self
+            .session_to_client_mapping
+            .entry(session_id)
+            .or_insert(vec![]);
         clients.push(client_id);
         self.client_to_session_mapping.insert(client_id, session_id);
 
-        let session_handle = self.sessions.get_mut(&session_id).expect("session should exist here");
+        let session_handle = self
+            .sessions
+            .get_mut(&session_id)
+            .expect("session should exist here");
         client_handle.success_attach_to_session(session_id).await?;
         session_handle.user_connection().await
     }
@@ -195,7 +224,11 @@ impl SessionManager {
         }
         Ok(())
     }
-    async fn handle_client_switch_session(&mut self, client_id: u32, session_id: u32) -> Result<()> {
+    async fn handle_client_switch_session(
+        &mut self,
+        client_id: u32,
+        session_id: u32,
+    ) -> Result<()> {
         let client_handle = self.unmap_client(client_id).unwrap();
         self.map_client(client_id, client_handle, session_id);
         if let Some(session_handle) = self.sessions.get(&session_id) {
@@ -227,7 +260,11 @@ impl SessionManager {
             Ok(())
         }
     }
-    async fn handle_client_split_pane(&mut self, client_id: u32, direction: SplitDirection) -> Result<()> {
+    async fn handle_client_split_pane(
+        &mut self,
+        client_id: u32,
+        direction: SplitDirection,
+    ) -> Result<()> {
         if let Some(session_id) = self.client_to_session_mapping.get(&client_id) {
             let session_handle = self.sessions.get_mut(session_id).unwrap();
             session_handle.user_split_pane(direction).await
@@ -253,9 +290,17 @@ impl SessionManager {
         Ok(())
     }
 
-    fn map_client(&mut self, client_id: u32, client_handle: ClientConnectionHandle, session_id: u32) -> Result<()> {
+    fn map_client(
+        &mut self,
+        client_id: u32,
+        client_handle: ClientConnectionHandle,
+        session_id: u32,
+    ) -> Result<()> {
         self.clients.insert(client_id, client_handle);
-        let clients = self.session_to_client_mapping.entry(session_id).or_insert(vec![]);
+        let clients = self
+            .session_to_client_mapping
+            .entry(session_id)
+            .or_insert(vec![]);
         clients.push(client_id);
         self.client_to_session_mapping.insert(client_id, session_id);
 

@@ -17,7 +17,7 @@ pub enum PaneEvent {
     UserInput { bytes: Bytes },
     PtyOutput { bytes: Bytes },
     PtyDied,
-    Render,   // uses the diff from prev state to get to desired state (falls back to rerender if no prev state)
+    Render, // uses the diff from prev state to get to desired state (falls back to rerender if no prev state)
     Rerender, // full rerender
     Resize { rect: Rect },
     Hide,
@@ -55,7 +55,7 @@ impl Pane {
         let handle = PaneHandle { tx };
 
         let vte = vt100::Parser::new(rect.height, rect.width, 0);
-        let pty_handle = Pty::spawn(handle.clone(), rect.height, rect.width)?;
+        let pty_handle = Pty::spawn(handle.clone(), rect)?;
         Ok(Self {
             id,
             handle,
@@ -83,14 +83,12 @@ impl Pane {
                             }
                             PtyOutput { bytes } => {
                                 trace!("Pane: PtyOutput({bytes:?}");
-                                match self.handle_pty_output(bytes).await {
-                                    Ok(_) => (),
-                                    Err(e) => error!("{}", e),
+                                if let Err(e) = self.handle_pty_output(bytes).await {
+                                    error!("Error while handling PTY output: {}", e);
                                 }
                             }
                             PtyDied => {
                                 debug!("Pane: PtyDied");
-                                // TODO: notify the window that pane has died
                                 break;
                             }
                             Kill => {
@@ -100,9 +98,8 @@ impl Pane {
                             }
                             Render => {
                                 trace!("Pane: Render");
-                                match self.handle_render().await {
-                                    Ok(_) => (),
-                                    Err(e) => error!("{}", e),
+                                if let Err(e) = self.handle_render().await {
+                                    error!("Error while rendering pane: {}", e);
                                 }
                             }
                             Rerender => {
@@ -141,6 +138,7 @@ impl Pane {
         self.handle.rerender().await
     }
 
+    // TODO: below code is bad and unused, need better diffing solution
     async fn handle_render(&mut self) -> Result<()> {
         match &self.prev_screen_state {
             Some(prev) => {
@@ -152,7 +150,11 @@ impl Pane {
                 let global_y = self.rect.y + 1 + c_row;
                 Ok(self
                     .window_handle
-                    .pane_output(self.id, Bytes::copy_from_slice(&diff), Some((global_x, global_y)))
+                    .pane_output(
+                        self.id,
+                        Bytes::copy_from_slice(&diff),
+                        Some((global_x, global_y)),
+                    )
                     .await?)
             }
             None => self.handle_rerender().await,
@@ -191,7 +193,7 @@ impl Pane {
 
     async fn handle_resize(&mut self, rect: Rect) -> Result<()> {
         self.rect = rect;
-        self.pty_handle.resize(rect.height, rect.width).await?;
+        self.pty_handle.resize(rect).await?;
         self.vte.screen_mut().set_size(rect.height, rect.width);
 
         self.handle_rerender().await?;

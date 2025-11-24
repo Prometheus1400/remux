@@ -1,5 +1,5 @@
 # Maximum line width before rustfmt wraps code onto multiple lines
-max_width = 120
+max_width = 100
 
 # Use hard tabs instead of spaces? (false = use spaces)
 hard_tabs = false

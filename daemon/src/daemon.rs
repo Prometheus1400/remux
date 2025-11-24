@@ -45,7 +45,8 @@ impl RemuxDaemon {
         loop {
             let (stream, _) = listener.accept().await?;
             info!("accepting connection");
-            if let Err(e) = handle_communication(self.session_manager_handle.clone(), stream).await {
+            if let Err(e) = handle_communication(self.session_manager_handle.clone(), stream).await
+            {
                 error!("{e}");
             }
         }
@@ -53,7 +54,10 @@ impl RemuxDaemon {
 }
 
 #[instrument(skip(session_manager_handle, stream))]
-async fn handle_communication(session_manager_handle: SessionManagerHandle, mut stream: UnixStream) -> Result<()> {
+async fn handle_communication(
+    session_manager_handle: SessionManagerHandle,
+    mut stream: UnixStream,
+) -> Result<()> {
     let req = communication::read_req(&mut stream).await?;
     match req.body {
         RequestBody::Attach { session_id } => {

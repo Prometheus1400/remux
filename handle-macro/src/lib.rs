@@ -31,7 +31,10 @@ pub fn handle(input: TokenStream) -> TokenStream {
         let variant_name = &v.ident;
 
         // convert CamelCase -> snake_case method name
-        let method_name = syn::Ident::new(&to_snake_case(&variant_name.to_string()), variant_name.span());
+        let method_name = syn::Ident::new(
+            &to_snake_case(&variant_name.to_string()),
+            variant_name.span(),
+        );
 
         match &v.fields {
             Fields::Named(fields_named) => {
@@ -55,8 +58,8 @@ pub fn handle(input: TokenStream) -> TokenStream {
                     let ty = &f.ty;
                     quote! { #name: #ty }
                 });
-                let arg_names =
-                    (0..fields_unnamed.unnamed.len()).map(|i| syn::Ident::new(&format!("arg{}", i), v.ident.span()));
+                let arg_names = (0..fields_unnamed.unnamed.len())
+                    .map(|i| syn::Ident::new(&format!("arg{}", i), v.ident.span()));
 
                 quote! {
                     pub async fn #method_name(&self, #( #args ),* ) -> Result<()> {

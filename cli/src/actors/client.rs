@@ -154,6 +154,9 @@ pub struct ClientHandle {
 }
 impl ClientHandle {
     pub async fn send_switch_session(&mut self, session_id: Option<u32>) -> Result<()> {
-        Ok(self.tx.send(ClientEvent::SwitchSession { session_id }).await?)
+        Ok(self
+            .tx
+            .send(ClientEvent::SwitchSession { session_id })
+            .await?)
     }
 }
