@@ -17,6 +17,7 @@ pub enum PaneEvent {
     PtyDied,
     Render, // uses the diff from prev state to get to desired state (falls back to rerender if no prev state)
     Rerender, // full rerender
+    Resize { rect: Rect },
     Hide,
     Reveal,
     Kill,
@@ -97,7 +98,7 @@ impl Pane {
                             }
                             Render => {
                                 trace!("Pane: Render");
-                                match self.handle_rerender().await {
+                                match self.handle_render().await {
                                     Ok(_) => (),
                                     Err(e) => error!("{}", e)
                                 }
@@ -105,6 +106,10 @@ impl Pane {
                             Rerender => {
                                 debug!("Pane: Rerender");
                                 self.handle_rerender().await.unwrap();
+                            }
+                            Resize { rect } => {
+                                debug!("Pane: Rerender");
+                                self.handle_resize(rect).await.unwrap();
                             }
                             Hide => {
                                 debug!("Pane: Hide");
@@ -134,20 +139,23 @@ impl Pane {
         self.handle.rerender().await
     }
 
-    // async fn handle_render(&mut self) -> Result<()> {
-    //     match &self.prev_screen_state {
-    //         Some(prev) => {
-    //             let cur_screen_state = self.vte.screen().clone();
-    //             let diff = cur_screen_state.state_diff(prev);
-    //             self.prev_screen_state = Some(cur_screen_state);
-    //             Ok(self
-    //                 .window_handle
-    //                 .pane_output(Bytes::copy_from_slice(&diff))
-    //                 .await?)
-    //         }
-    //         None => self.handle_rerender().await,
-    //     }
-    // }
+    async fn handle_render(&mut self) -> Result<()> {
+        match &self.prev_screen_state {
+            Some(prev) => {
+                let cur_screen_state = self.vte.screen();
+                let diff = cur_screen_state.state_diff(prev);
+                self.prev_screen_state = Some(cur_screen_state.clone());
+                let (c_row, c_col) = cur_screen_state.cursor_position();
+                let global_x = self.rect.x + 1 + c_col;
+                let global_y = self.rect.y + 1 + c_row;
+                Ok(self
+                    .window_handle
+                    .pane_output(self.id, Bytes::copy_from_slice(&diff), Some((global_x, global_y)))
+                    .await?)
+            }
+            None => self.handle_rerender().await,
+        }
+    }
 
     async fn handle_rerender(&mut self) -> Result<()> {
         let screen = self.vte.screen();
@@ -166,7 +174,6 @@ impl Pane {
 
             let erase_chars = format!("\x1b[{}X", self.rect.width);
             output.extend_from_slice(erase_chars.as_bytes());
-
             output.extend_from_slice(&row);
         }
 
@@ -176,11 +183,22 @@ impl Pane {
         let global_x = self.rect.x + 1 + c_col;
         let global_y = self.rect.y + 1 + c_row;
 
-        // 3. Send it all to the Window
         self.window_handle.pane_output(
             self.id,
             Bytes::from(output),
             Some((global_x, global_y))
         ).await
+    }
+
+    async fn handle_resize(&mut self, rect: Rect) -> Result<()> {
+        let old_state = self.vte.screen().contents_formatted();
+
+        self.rect = rect;
+        self.vte = vt100::Parser::new(rect.height, rect.width, 0);
+        self.vte.process(&old_state);
+
+        self.pty_handle.resize(rect.height, rect.width).await?;
+        self.handle_rerender().await?;
+        Ok(())
     }
 }

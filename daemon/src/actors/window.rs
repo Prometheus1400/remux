@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, mem};
 
 use bytes::Bytes;
 use handle_macro::Handle;
@@ -17,6 +17,7 @@ pub enum WindowEvent {
     UserInput { bytes: Bytes },  // input from user
     PaneOutput { id: usize, bytes: Bytes, cursor: Option<(u16, u16)> }, // output from pane
     IteratePane { is_next: bool },
+    KillPane,
     Redraw,
     Kill,
 }
@@ -77,29 +78,23 @@ impl Window {
         if ids.is_empty() { return Ok(()); } // Guard against empty window
         ids.sort();
 
-        // 2. Find where we are currently
-        // If active_pane_id is invalid (e.g. just closed), default to 0 (first pane)
         let current_idx = ids.iter().position(|&id| id == self.active_pane_id).unwrap_or(0);
 
-        // 3. Calculate new index with wrapping
         let new_idx = if is_next {
-            (current_idx + 1) % ids.len() // Wrap: (2+1) % 3 = 0
+            (current_idx + 1) % ids.len()
         } else {
             if current_idx == 0 {
-                ids.len() - 1 // Wrap: Previous from 0 goes to last
+                ids.len() - 1
             } else {
                 current_idx - 1
             }
         };
 
-        // 4. Update the state
         self.active_pane_id = ids[new_idx];
         debug!("Switched to Pane ID: {}", self.active_pane_id);
         let (tx, ty) = if let Some(&pos) = self.pane_cursors.get(&self.active_pane_id) {
-            // Option A: We know exactly where the cursor was last seen
             pos 
         } else {
-            // Option B: Fallback (Pane hasn't drawn yet). Move to top-left of the pane.
             if let Some(rect) = self.layout_sizing_map.get(&self.active_pane_id) {
                 (rect.x + 1, rect.y + 1)
             } else {
@@ -108,9 +103,54 @@ impl Window {
             }
         };
 
-        // 3. Send the command directly to the session
         let move_cursor = format!("\x1b[{};{}H", ty, tx);
         self.session_handle.window_output(Bytes::from(move_cursor)).await?;
+
+        Ok(())
+    }
+    async fn handle_kill_pane(&mut self) -> Result<()> {
+        let dead_pane_id = self.active_pane_id;
+        if self.panes.len() < 1 {
+            // TODO: kill window if last pane is killed
+            warn!("Can't kill last pane {}", dead_pane_id);
+            return Ok(()); 
+        }
+
+        debug!("Killing pane {}", dead_pane_id);
+        if let Some(pane_handle) = self.panes.get(&dead_pane_id) {
+            let _ = pane_handle.kill().await.unwrap();
+        }
+
+        self.panes.remove(&dead_pane_id);
+        self.pane_cursors.remove(&dead_pane_id);
+        self.layout_sizing_map.remove(&dead_pane_id);
+
+        let dummy_node = LayoutNode::Pane { id: 0 }; 
+        let old_layout = mem::replace(&mut self.layout, dummy_node);
+
+        if let Some(new_layout) = old_layout.remove_node(dead_pane_id) {
+            self.layout = new_layout;
+        } else {
+            info!("No panes left.");
+            return Ok(());
+        }
+
+        if let Some(&new_id) = self.panes.keys().next() {
+            self.active_pane_id = new_id;
+        }
+
+        let root_rect = Rect { x: 0, y: 0, width: 214, height: 62 };
+        self.layout_sizing_map.clear();
+        self.layout.calculate_layout(root_rect, &mut self.layout_sizing_map)?;
+
+        for (id, pane) in self.panes.iter() {
+            if let Some(new_rect) = self.layout_sizing_map.get(id) {
+                pane.resize(*new_rect).await?; 
+            }
+        }
+
+        self.session_handle.window_output(Bytes::from(crossterm::terminal::Clear(crossterm::terminal::ClearType::All).to_string())).await?;
+        self.handle_redraw().await?;
 
         Ok(())
     }
@@ -186,6 +226,10 @@ impl Window {
                             IteratePane { is_next } => {
                                 debug!("Window: IteratePane");
                                 self.handle_iterate_pane(is_next).await.unwrap();
+                            }
+                            KillPane => {
+                                debug!("Window: IteratePane");
+                                self.handle_kill_pane().await.unwrap();
                             }
                             Redraw => {
                                 debug!("Window: Redraw");

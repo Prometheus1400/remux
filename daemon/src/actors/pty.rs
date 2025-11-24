@@ -26,6 +26,7 @@ use crate::{actors::pane::PaneHandle, prelude::*};
 pub enum PtyEvent {
     Kill,
     Input { bytes: Bytes },
+    Resize { rows: u16, cols: u16 },
 }
 use PtyEvent::*;
 
@@ -136,6 +137,10 @@ impl Pty {
                                             trace!("Pty: Input({bytes:?}");
                                             self.handle_input(bytes.clone())
                                         },
+                                        Resize { rows, cols } => {
+                                            debug!("Pty: Resize");
+                                            self.handle_resize(async_fd.get_ref().as_raw_fd(), rows, cols)
+                                        }
                                     };
                                     if let Err(e) = res {
                                         error!("error handling {event:?} in PtyProcess: {e}");
@@ -178,6 +183,11 @@ impl Pty {
     fn handle_kill(child: Pid) -> Result<()> {
         kill(child, Signal::SIGKILL)?;
         info!("killing pty child process {child}");
+        Ok(())
+    }
+
+    fn handle_resize(&mut self, raw_fd: RawFd, rows: u16, cols: u16) -> Result<()> {
+        set_winsize(raw_fd, rows, cols)?;
         Ok(())
     }
 }

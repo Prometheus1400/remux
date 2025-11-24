@@ -246,7 +246,7 @@ impl SessionManager {
     async fn handle_client_kill_pane(&mut self, client_id: u32) -> Result<()> {
         if let Some(session_id) = self.client_to_session_mapping.get(&client_id) {
             let session_handle = self.sessions.get_mut(session_id).unwrap();
-            session_handle.kill().await
+            session_handle.user_kill_pane().await
         } else {
             Ok(())
         }

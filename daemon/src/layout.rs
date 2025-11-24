@@ -63,6 +63,38 @@ impl LayoutNode {
         }
     }
 
+    pub fn remove_node(self, target_id: usize) -> Option<LayoutNode> {
+        match self {
+            LayoutNode::Pane { id } => {
+                if id == target_id {
+                    None
+                } else {
+                    Some(LayoutNode::Pane { id })
+                }
+            }
+            LayoutNode::Split { direction, left, right, left_weight, right_weight } => {
+                let new_left = left.remove_node(target_id);
+                let new_right = right.remove_node(target_id);
+
+                match (new_left, new_right) {
+                    (Some(l), Some(r)) => {
+                        Some(
+                            LayoutNode::Split { 
+                                direction,
+                                left: Box::new(l),
+                                right: Box::new(r),
+                                left_weight,
+                                right_weight }
+                        )
+                    }
+                    (Some(l), None) => { Some(l) }
+                    (None, Some(r)) => { Some(r) }
+                    (None, None) => { None }
+                }
+            }
+        }
+    }
+
     pub fn calculate_layout(&self, area: Rect, results: &mut HashMap<usize, Rect>) -> Result<()> {
         match self {
             LayoutNode::Pane { id } => {
@@ -115,10 +147,8 @@ impl LayoutNode {
                         Ok(())
                     }
                 }
-
             }
         }
-
     }
 }
 

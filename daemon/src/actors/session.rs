@@ -86,7 +86,7 @@ impl Session {
                             }
                             UserKillPane => {
                                 debug!("Session: UserKillPane");
-                                todo!()
+                                self.handle_kill_pane().await.unwrap();
                             }
                             WindowOutput { bytes } => {
                                 trace!("Session: WindowOutput");
@@ -126,5 +126,9 @@ impl Session {
 
     async fn handle_iterate_pane(&self, is_next: bool) -> Result<()> {
         self.window_handle.iterate_pane(is_next).await
+    }
+
+    async fn handle_kill_pane(&self) -> Result<()> {
+        self.window_handle.kill_pane().await
     }
 }
