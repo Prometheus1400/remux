@@ -20,7 +20,7 @@ use crate::{
         ui::{UI, UIHandle},
         widget_runner::WidgetRunnerHandle,
     },
-    input_parser::{InputParser, Action, ParsedEvent},
+    input_parser::{Action, InputParser, ParsedEvent},
     prelude::*,
     state_view::StateView,
 };
