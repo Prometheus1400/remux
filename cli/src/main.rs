@@ -1,8 +1,9 @@
 mod actors;
 mod args;
-mod state_view;
+mod cli_event_parser;
 mod error;
 mod prelude;
+mod state_view;
 mod widgets;
 
 use std::io::stdout;

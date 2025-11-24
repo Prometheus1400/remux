@@ -73,10 +73,10 @@ impl WidgetRunner {
                                 {
                                     let session_id = items[index];
                                     self.client_handle
-                                        .send_switch_session(Some(session_id))
+                                        .switch_session(Some(session_id))
                                         .await?;
                                 } else {
-                                    self.client_handle.send_switch_session(None).await?;
+                                    self.client_handle.switch_session(None).await?;
                                 }
                             }
                         }

@@ -1,4 +1,4 @@
-use bytes::Bytes;
+use remux_core::events::CliEvent;
 
 use crate::prelude::*;
 
@@ -11,16 +11,16 @@ const P: u8 = 0x70;
 const S: u8 = 0x73;
 const X: u8 = 0x78;
 
-pub enum ParsedEvents {
-    Raw(Bytes),
-    KillPane,
-    NextPane,
-    SplitPaneVertical,
-    SplitPaneHorizontal,
-    PrevPane,
-    RequestSwitchSession, // trigger for UI switch session popup
+pub enum ParsedEvent {
+    LocalAction(LocalAction),
+    DaemonAction(CliEvent),
 }
 
+pub enum LocalAction {
+    SwitchSession, 
+}
+
+#[derive(Debug)]
 pub struct InputParser {
     buf: Vec<u8>,
 }
@@ -30,9 +30,8 @@ impl InputParser {
         Self { buf: vec![] }
     }
 
-    pub fn process(&mut self, input: &[u8]) -> Vec<ParsedEvents> {
+    pub fn process(&mut self, input: &[u8]) -> Vec<ParsedEvent> {
         self.buf.extend(input);
-
         let mut events = vec![];
         let mut i = 0;
         while i < self.buf.len() {
@@ -44,32 +43,32 @@ impl InputParser {
                         let b_next = self.buf[i + 1];
                         if i > 0 {
                             let old: Vec<u8> = self.buf.drain(..i).collect();
-                            events.push(ParsedEvents::Raw(Bytes::from(old)));
+                            events.push(ParsedEvent::DaemonAction(CliEvent::Raw(old)));
                             i = 0;
                         }
                         match b_next {
                             PERCENT => {
-                                events.push(ParsedEvents::SplitPaneVertical);
+                                events.push(ParsedEvent::DaemonAction(CliEvent::SplitPaneVertical));
                                 self.buf.drain(..2);
                             }
                             DOUBLE_QUOTE => {
-                                events.push(ParsedEvents::SplitPaneHorizontal);
+                                events.push(ParsedEvent::DaemonAction(CliEvent::SplitPaneHorizontal));
                                 self.buf.drain(..2);
                             }
                             N => {
-                                events.push(ParsedEvents::NextPane);
+                                events.push(ParsedEvent::DaemonAction(CliEvent::NextPane));
                                 self.buf.drain(..2);
                             }
                             P => {
-                                events.push(ParsedEvents::PrevPane);
-                                self.buf.drain(..2);
-                            }
-                            S => {
-                                events.push(ParsedEvents::RequestSwitchSession);
+                                events.push(ParsedEvent::DaemonAction(CliEvent::PrevPane));
                                 self.buf.drain(..2);
                             }
                             X => {
-                                events.push(ParsedEvents::KillPane);
+                                events.push(ParsedEvent::DaemonAction(CliEvent::KillPane));
+                                self.buf.drain(..2);
+                            }
+                            S => {
+                                events.push(ParsedEvent::LocalAction(LocalAction::SwitchSession));
                                 self.buf.drain(..2);
                             }
                             _ => {
@@ -80,7 +79,7 @@ impl InputParser {
                     } else {
                         let old: Vec<u8> = self.buf.drain(..i).collect();
                         if !old.is_empty() {
-                            events.push(ParsedEvents::Raw(Bytes::from(old)));
+                            events.push(ParsedEvent::DaemonAction(CliEvent::Raw(old)));
                         }
                         break;
                     }
@@ -91,7 +90,7 @@ impl InputParser {
 
         let old: Vec<u8> = self.buf.drain(..i).collect();
         if !old.is_empty() {
-            events.push(ParsedEvents::Raw(Bytes::from(old)));
+            events.push(ParsedEvent::DaemonAction(CliEvent::Raw(old)));
         }
         trace!("return from process with remaining {:?}", self.buf);
         events

@@ -2,7 +2,6 @@ mod actors;
 mod control_signals;
 mod daemon;
 mod error;
-mod input_parser;
 mod layout;
 mod prelude;
 

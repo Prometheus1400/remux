@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use bytes::Bytes;
+use handle_macro::Handle;
 use remux_core::{
     communication,
     events::{CliEvent, DaemonEvent},
@@ -17,12 +18,10 @@ use crate::{
         WidgetRunner,
         ui::{UI, UIHandle},
         widget_runner::WidgetRunnerHandle,
-    },
-    prelude::*,
-    state_view::StateView,
+    }, cli_event_parser::{InputParser, LocalAction, ParsedEvent}, prelude::*, state_view::StateView
 };
 
-#[derive(Debug)]
+#[derive(Handle)]
 pub enum ClientEvent {
     SwitchSession { session_id: Option<u32> },
 }
@@ -52,6 +51,7 @@ pub struct Client {
     widget_runner_handle: WidgetRunnerHandle,
     ui_handle: UIHandle,
     state_view: StateView,
+    input_parser: InputParser, 
 }
 impl Client {
     #[instrument(skip(stream))]
@@ -76,6 +76,7 @@ impl Client {
             widget_runner_handle,
             ui_handle,
             state_view: StateView::default(),
+            input_parser: InputParser::new(),
         })
     }
 
@@ -109,8 +110,6 @@ impl Client {
                                     match event {
                                         DaemonEvent::Raw{bytes} => {
                                             trace!("DaemonEvent(Raw({bytes:?}))");
-                                            // stdout.write_all(&bytes).await?;
-                                            // stdout.flush().await?;
                                             self.ui_handle.output(Bytes::from(bytes)).await?;
                                         }
                                         DaemonEvent::SwitchSessionOptions{session_ids} => {
@@ -148,7 +147,22 @@ impl Client {
                                     match self.stdin_state {
                                         StdinState::Daemon => {
                                             trace!("Sending {n} bytes to Daemon");
-                                            communication::send_event(&mut self.stream, CliEvent::Raw{bytes: stdin_buf[..n].to_vec() }).await?;
+                                            for event in self.input_parser.process(&stdin_buf[..n]) {
+                                                match event {
+                                                    ParsedEvent::DaemonAction(cli_event) => {
+                                                        communication::send_event(&mut self.stream, cli_event).await?;
+                                                    },
+                                                    ParsedEvent::LocalAction(local_action) => {
+                                                        match local_action {
+                                                            LocalAction::SwitchSession => {
+                                                                self.daemon_events_state = DaemonEventsState::Blocked;
+                                                                self.stdin_state = StdinState::Popup;
+                                                                self.widget_runner_handle.select_session(self.state_view.session_ids.clone()).await?;
+                                                            },
+                                                        }
+                                                    },
+                                                }
+                                            }
 
                                         },
                                         StdinState::Popup => {
@@ -178,18 +192,5 @@ impl Client {
         });
 
         Ok(task)
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct ClientHandle {
-    tx: mpsc::Sender<ClientEvent>,
-}
-impl ClientHandle {
-    pub async fn send_switch_session(&mut self, session_id: Option<u32>) -> Result<()> {
-        Ok(self
-            .tx
-            .send(ClientEvent::SwitchSession { session_id })
-            .await?)
     }
 }

@@ -28,9 +28,6 @@ pub enum SessionManagerEvent {
     ClientDisconnect {
         client_id: u32,
     },
-    ClientRequestSwitchSession {
-        client_id: u32,
-    },
     ClientSwitchSession {
         client_id: u32,
         session_id: u32,
@@ -118,12 +115,6 @@ impl SessionManager {
                             ClientDisconnect { client_id } => {
                                 debug!("SessionManager: ClientDisconnect");
                                 self.handle_client_disconnect(client_id).await.unwrap();
-                            }
-                            ClientRequestSwitchSession { client_id } => {
-                                debug!("SessionManager: ClientRequestSwitchSession");
-                                self.handle_client_request_switch_session(client_id)
-                                    .await
-                                    .unwrap();
                             }
                             ClientSwitchSession {
                                 client_id,
@@ -217,14 +208,6 @@ impl SessionManager {
             if let Some(clients) = self.session_to_client_mapping.get_mut(&session_id) {
                 clients.retain(|c| c != &client_id);
             }
-        }
-        Ok(())
-    }
-    async fn handle_client_request_switch_session(&mut self, client_id: u32) -> Result<()> {
-        if let Some(client_handle) = self.clients.get(&client_id) {
-            client_handle
-                .respond_request_switch_session(self.sessions.keys().copied().collect())
-                .await?;
         }
         Ok(())
     }
