@@ -20,7 +20,7 @@ use crate::{
         ui::{UI, UIHandle},
         widget_runner::WidgetRunnerHandle,
     },
-    input_parser::{InputParser, LocalAction, ParsedEvent},
+    input_parser::{InputParser, Action, ParsedEvent},
     prelude::*,
     state_view::StateView,
 };
@@ -158,7 +158,7 @@ impl Client {
                                                     },
                                                     ParsedEvent::LocalAction(local_action) => {
                                                         match local_action {
-                                                            LocalAction::SwitchSession => {
+                                                            Action::SwitchSession => {
                                                                 self.daemon_events_state = DaemonEventsState::Blocked;
                                                                 self.stdin_state = StdinState::Popup;
                                                                 self.widget_runner_handle.select_session(self.state_view.session_ids.clone()).await?;

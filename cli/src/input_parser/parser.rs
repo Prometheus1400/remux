@@ -1,7 +1,7 @@
 use remux_core::events::CliEvent;
 
 use crate::{
-    input_parser::events::{LocalAction, ParsedEvent},
+    input_parser::events::{Action, ParsedEvent},
     prelude::*,
 };
 
@@ -25,6 +25,7 @@ impl InputParser {
     }
 
     pub fn process(&mut self, input: &[u8]) -> Vec<ParsedEvent> {
+        use ParsedEvent::{DaemonAction, LocalAction};
         self.buf.extend(input);
         let mut events = vec![];
         let mut i = 0;
@@ -37,33 +38,32 @@ impl InputParser {
                         let b_next = self.buf[i + 1];
                         if i > 0 {
                             let old: Vec<u8> = self.buf.drain(..i).collect();
-                            events.push(ParsedEvent::DaemonAction(CliEvent::Raw(old)));
+                            events.push(DaemonAction(CliEvent::Raw(old)));
                             i = 0;
                         }
                         match b_next {
                             PERCENT => {
-                                events.push(ParsedEvent::DaemonAction(CliEvent::SplitPaneVertical));
+                                events.push(DaemonAction(CliEvent::SplitPaneVertical));
                                 self.buf.drain(..2);
                             }
                             DOUBLE_QUOTE => {
-                                events
-                                    .push(ParsedEvent::DaemonAction(CliEvent::SplitPaneHorizontal));
+                                events.push(DaemonAction(CliEvent::SplitPaneHorizontal));
                                 self.buf.drain(..2);
                             }
                             N => {
-                                events.push(ParsedEvent::DaemonAction(CliEvent::NextPane));
+                                events.push(DaemonAction(CliEvent::NextPane));
                                 self.buf.drain(..2);
                             }
                             P => {
-                                events.push(ParsedEvent::DaemonAction(CliEvent::PrevPane));
+                                events.push(DaemonAction(CliEvent::PrevPane));
                                 self.buf.drain(..2);
                             }
                             X => {
-                                events.push(ParsedEvent::DaemonAction(CliEvent::KillPane));
+                                events.push(DaemonAction(CliEvent::KillPane));
                                 self.buf.drain(..2);
                             }
                             S => {
-                                events.push(ParsedEvent::LocalAction(LocalAction::SwitchSession));
+                                events.push(LocalAction(Action::SwitchSession));
                                 self.buf.drain(..2);
                             }
                             _ => {
@@ -74,7 +74,7 @@ impl InputParser {
                     } else {
                         let old: Vec<u8> = self.buf.drain(..i).collect();
                         if !old.is_empty() {
-                            events.push(ParsedEvent::DaemonAction(CliEvent::Raw(old)));
+                            events.push(DaemonAction(CliEvent::Raw(old)));
                         }
                         break;
                     }
@@ -85,7 +85,7 @@ impl InputParser {
 
         let old: Vec<u8> = self.buf.drain(..i).collect();
         if !old.is_empty() {
-            events.push(ParsedEvent::DaemonAction(CliEvent::Raw(old)));
+            events.push(DaemonAction(CliEvent::Raw(old)));
         }
         trace!("return from process with remaining {:?}", self.buf);
         events
