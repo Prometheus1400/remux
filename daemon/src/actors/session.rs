@@ -9,6 +9,7 @@ use crate::{
         window::{Window, WindowHandle},
     },
     error::Result,
+    layout::SplitDirection,
     prelude::*,
 };
 
@@ -21,7 +22,7 @@ pub enum SessionEvent {
     //  - client id not needed anymore because session controls active window and
     //    window controls active pane which should be sufficient)
     UserConnection,
-    UserSplitPane,
+    UserSplitPane { direction: SplitDirection },
     UserIteratePane { is_next: bool },
     UserKillPane,
     Redraw,
@@ -76,11 +77,11 @@ impl Session {
                                 debug!("Session: UserConnection");
                                 self.handle_new_connection().await.unwrap();
                             }
-                            UserSplitPane => {
+                            UserSplitPane { direction } => {
                                 debug!("Session: UserSplitPane");
-                                todo!()
+                                self.handle_split_pane(direction).await.unwrap();
                             }
-                            UserIteratePane { is_next }=> {
+                            UserIteratePane { is_next } => {
                                 debug!("Session: UserIteratePane");
                                 self.handle_iterate_pane(is_next).await.unwrap();
                             }
@@ -115,9 +116,7 @@ impl Session {
     }
 
     async fn handle_window_output(&self, bytes: Bytes) -> Result<()> {
-        self.session_manager_handle
-            .session_send_output(self.id, bytes)
-            .await
+        self.session_manager_handle.session_send_output(self.id, bytes).await
     }
 
     async fn handle_new_connection(&self) -> Result<()> {
@@ -126,6 +125,10 @@ impl Session {
 
     async fn handle_iterate_pane(&self, is_next: bool) -> Result<()> {
         self.window_handle.iterate_pane(is_next).await
+    }
+
+    async fn handle_split_pane(&self, direction: SplitDirection) -> Result<()> {
+        self.window_handle.split_pane(direction).await
     }
 
     async fn handle_kill_pane(&self) -> Result<()> {

@@ -7,7 +7,10 @@ mod widgets;
 use std::io::stdout;
 
 use clap::Parser;
-use crossterm::{execute, terminal::{EnterAlternateScreen, LeaveAlternateScreen}};
+use crossterm::{
+    execute,
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen},
+};
 use ratatui::crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use remux_core::{
     communication,
@@ -37,9 +40,7 @@ async fn main() {
         Err(e) => {
             if let Err(e) = disable_raw_mode() {
                 eprintln!("error disabling raw mode: {e}");
-                eprintln!(
-                    "terminal may still be in raw mode!!! You can run 'stty sane' to reset it."
-                );
+                eprintln!("terminal may still be in raw mode!!! You can run 'stty sane' to reset it.");
             }
             eprintln!("{e}");
             std::process::exit(1);
@@ -56,10 +57,7 @@ fn setup_logging() -> Result<tracing_appender::non_blocking::WorkerGuard> {
 
     let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("debug"));
 
-    let subscriber = fmt()
-        .with_writer(non_blocking)
-        .with_env_filter(env_filter)
-        .finish();
+    let subscriber = fmt().with_writer(non_blocking).with_env_filter(env_filter).finish();
     tracing::subscriber::set_global_default(subscriber)?;
     Ok(guard)
 }

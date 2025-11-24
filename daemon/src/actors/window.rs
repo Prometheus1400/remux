@@ -1,6 +1,7 @@
 use std::{collections::HashMap, mem};
 
 use bytes::Bytes;
+use crossterm::terminal;
 use handle_macro::Handle;
 use tokio::sync::mpsc;
 use tracing::Instrument;
@@ -9,14 +10,27 @@ use crate::{
     actors::{
         pane::{Pane, PaneHandle},
         session::SessionHandle,
-    }, layout::{LayoutNode, Rect}, prelude::*
+    },
+    layout::{LayoutNode, Rect, SplitDirection},
+    prelude::*,
 };
 
 #[derive(Handle)]
 pub enum WindowEvent {
-    UserInput { bytes: Bytes },  // input from user
-    PaneOutput { id: usize, bytes: Bytes, cursor: Option<(u16, u16)> }, // output from pane
-    IteratePane { is_next: bool },
+    UserInput {
+        bytes: Bytes,
+    }, // input from user
+    PaneOutput {
+        id: usize,
+        bytes: Bytes,
+        cursor: Option<(u16, u16)>,
+    }, // output from pane
+    IteratePane {
+        is_next: bool,
+    },
+    SplitPane {
+        direction: SplitDirection,
+    },
     KillPane,
     Redraw,
     Kill,
@@ -40,8 +54,8 @@ pub struct Window {
     panes: HashMap<usize, PaneHandle>,
     pane_cursors: HashMap<usize, (u16, u16)>,
     active_pane_id: usize,
-    max_pane_id: usize,
     next_pane_id: usize,
+    root_rect: Rect,
 
     #[allow(unused)]
     window_state: WindowState,
@@ -64,7 +78,7 @@ impl Window {
             let restore_cursor = format!("\x1b[{};{}H", active_y, active_x);
             self.session_handle.window_output(Bytes::from(restore_cursor)).await?;
         }
-        
+
         Ok(())
     }
     async fn handle_redraw(&mut self) -> Result<()> {
@@ -75,7 +89,9 @@ impl Window {
     }
     async fn handle_iterate_pane(&mut self, is_next: bool) -> Result<()> {
         let mut ids: Vec<usize> = self.panes.keys().copied().collect();
-        if ids.is_empty() { return Ok(()); } // Guard against empty window
+        if ids.is_empty() {
+            return Ok(());
+        }
         ids.sort();
 
         let current_idx = ids.iter().position(|&id| id == self.active_pane_id).unwrap_or(0);
@@ -93,7 +109,7 @@ impl Window {
         self.active_pane_id = ids[new_idx];
         debug!("Switched to Pane ID: {}", self.active_pane_id);
         let (tx, ty) = if let Some(&pos) = self.pane_cursors.get(&self.active_pane_id) {
-            pos 
+            pos
         } else {
             if let Some(rect) = self.layout_sizing_map.get(&self.active_pane_id) {
                 (rect.x + 1, rect.y + 1)
@@ -108,12 +124,40 @@ impl Window {
 
         Ok(())
     }
+    async fn handle_split_pane(&mut self, direction: SplitDirection) -> Result<()> {
+        self.layout.add_split(self.active_pane_id, self.next_pane_id, direction);
+        self.layout
+            .calculate_layout(self.root_rect, &mut self.layout_sizing_map)?;
+
+        // new pane rect
+        if let Some(rect) = self.layout_sizing_map.get(&self.next_pane_id) {
+            let pane_handle = Pane::spawn(self.handle.clone(), self.next_pane_id, *rect)?;
+            self.panes.insert(self.next_pane_id, pane_handle);
+        }
+
+        self.active_pane_id = self.next_pane_id;
+        self.next_pane_id += 1;
+
+        for (id, pane) in self.panes.iter() {
+            if let Some(new_rect) = self.layout_sizing_map.get(id) {
+                pane.resize(*new_rect).await?;
+            }
+        }
+
+        self.session_handle
+            .window_output(Bytes::from(
+                crossterm::terminal::Clear(crossterm::terminal::ClearType::All).to_string(),
+            ))
+            .await?;
+        self.handle_redraw().await?;
+        Ok(())
+    }
     async fn handle_kill_pane(&mut self) -> Result<()> {
         let dead_pane_id = self.active_pane_id;
-        if self.panes.len() < 1 {
+        if self.panes.len() <= 1 {
             // TODO: kill window if last pane is killed
             warn!("Can't kill last pane {}", dead_pane_id);
-            return Ok(()); 
+            return Ok(());
         }
 
         debug!("Killing pane {}", dead_pane_id);
@@ -125,7 +169,7 @@ impl Window {
         self.pane_cursors.remove(&dead_pane_id);
         self.layout_sizing_map.remove(&dead_pane_id);
 
-        let dummy_node = LayoutNode::Pane { id: 0 }; 
+        let dummy_node = LayoutNode::Pane { id: 0 };
         let old_layout = mem::replace(&mut self.layout, dummy_node);
 
         if let Some(new_layout) = old_layout.remove_node(dead_pane_id) {
@@ -139,17 +183,21 @@ impl Window {
             self.active_pane_id = new_id;
         }
 
-        let root_rect = Rect { x: 0, y: 0, width: 214, height: 62 };
         self.layout_sizing_map.clear();
-        self.layout.calculate_layout(root_rect, &mut self.layout_sizing_map)?;
+        self.layout
+            .calculate_layout(self.root_rect, &mut self.layout_sizing_map)?;
 
         for (id, pane) in self.panes.iter() {
             if let Some(new_rect) = self.layout_sizing_map.get(id) {
-                pane.resize(*new_rect).await?; 
+                pane.resize(*new_rect).await?;
             }
         }
 
-        self.session_handle.window_output(Bytes::from(crossterm::terminal::Clear(crossterm::terminal::ClearType::All).to_string())).await?;
+        self.session_handle
+            .window_output(Bytes::from(
+                crossterm::terminal::Clear(crossterm::terminal::ClearType::All).to_string(),
+            ))
+            .await?;
         self.handle_redraw().await?;
 
         Ok(())
@@ -167,29 +215,27 @@ impl Window {
         let handle = WindowHandle { tx };
 
         let init_pane_id = 0;
-        let mut init_layout_node = LayoutNode::Pane { id: init_pane_id };
+        let init_layout_node = LayoutNode::Pane { id: init_pane_id };
 
-        let init_pane_id_1 = 1;
+        let (cols, rows) = match terminal::size() {
+            Ok((c, r)) => (c, r),
+            Err(_) => (80, 24),
+        };
 
-        let mut layout_sizing_map = HashMap::new();
-        init_layout_node.add_split(init_pane_id, init_pane_id_1, crate::layout::SplitDirection::Vertical);
         let root_rect = Rect {
             x: 0,
             y: 0,
-            width: 214,
-            height: 62,
+            width: cols,
+            height: rows,
         };
+        let mut layout_sizing_map = HashMap::new();
         layout_sizing_map.insert(init_pane_id, root_rect);
         init_layout_node.calculate_layout(root_rect, &mut layout_sizing_map)?;
-        let mut panes = HashMap::new();
-        if let Some(rect_0) = layout_sizing_map.get(&init_pane_id) {
-            let pane_handle = Pane::spawn(handle.clone(), init_pane_id, *rect_0)?;
-            panes.insert(init_pane_id, pane_handle);
-        }
 
-        if let Some(rect_1) = layout_sizing_map.get(&init_pane_id_1) {
-            let pane_handle = Pane::spawn(handle.clone(), init_pane_id_1, *rect_1)?;
-            panes.insert(init_pane_id_1, pane_handle);
+        let mut panes = HashMap::new();
+        if let Some(rect) = layout_sizing_map.get(&init_pane_id) {
+            let pane_handle = Pane::spawn(handle.clone(), init_pane_id, *rect)?;
+            panes.insert(init_pane_id, pane_handle);
         }
 
         Ok(Self {
@@ -200,10 +246,10 @@ impl Window {
             layout_sizing_map,
             panes,
             active_pane_id: init_pane_id,
-            max_pane_id: 1,
-            next_pane_id: init_pane_id_1 + 1,
+            next_pane_id: init_pane_id + 1,
             window_state: WindowState::Focused,
             pane_cursors: HashMap::new(),
+            root_rect,
         })
     }
     #[instrument(skip(self))]
@@ -226,6 +272,10 @@ impl Window {
                             IteratePane { is_next } => {
                                 debug!("Window: IteratePane");
                                 self.handle_iterate_pane(is_next).await.unwrap();
+                            }
+                            SplitPane { direction } => {
+                                debug!("Window: SplitPane");
+                                self.handle_split_pane(direction).await.unwrap();
                             }
                             KillPane => {
                                 debug!("Window: IteratePane");

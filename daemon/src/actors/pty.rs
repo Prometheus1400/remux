@@ -9,7 +9,8 @@ use nix::{
     errno::Errno,
     libc::{F_GETFL, F_SETFL, O_NONBLOCK, TIOCSWINSZ, fcntl, ioctl},
     pty::{
-        ForkptyResult::{Child, Parent}, Winsize, forkpty
+        ForkptyResult::{Child, Parent},
+        Winsize, forkpty,
     },
     sys::{
         signal::{Signal, kill},
@@ -75,9 +76,7 @@ impl Pty {
             Parent { child, master } => {
                 debug!("child PID: {}", child.as_raw());
                 set_fd_nonblocking(&master)?;
-                let handle = PtyHandle {
-                    tx: self.tx.clone(),
-                };
+                let handle = PtyHandle { tx: self.tx.clone() };
                 let async_fd = AsyncFd::new(master)?;
                 set_winsize(async_fd.get_ref().as_raw_fd(), self.rows, self.cols)?;
                 let _task: DaemonTask = tokio::spawn({

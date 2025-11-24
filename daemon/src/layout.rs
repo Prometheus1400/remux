@@ -2,7 +2,6 @@ use std::collections::HashMap;
 
 use crate::prelude::*;
 
-
 #[derive(Debug, Clone, Copy)]
 pub enum SplitDirection {
     Horizontal,
@@ -24,8 +23,8 @@ pub enum LayoutNode {
         direction: SplitDirection,
         left: Box<LayoutNode>,
         right: Box<LayoutNode>,
-        left_weight: u32,           // used for sizing
-        right_weight: u32,          // used for sizing
+        left_weight: u32,  // used for sizing
+        right_weight: u32, // used for sizing
     },
 
     // leaf node
@@ -41,22 +40,21 @@ impl LayoutNode {
                     let left_node = Box::new(LayoutNode::Pane { id: *id });
                     let right_node = Box::new(LayoutNode::Pane { id: new_id });
 
-                    *self = LayoutNode::Split { 
+                    *self = LayoutNode::Split {
                         direction,
                         left: left_node,
                         right: right_node,
                         left_weight: 1,
-                        right_weight: 1
+                        right_weight: 1,
                     };
 
-                    return true
+                    return true;
                 }
                 false
-
             }
             LayoutNode::Split { left, right, .. } => {
                 if left.add_split(target_id, new_id, direction) {
-                    return true
+                    return true;
                 }
                 right.add_split(target_id, new_id, direction)
             }
@@ -72,24 +70,27 @@ impl LayoutNode {
                     Some(LayoutNode::Pane { id })
                 }
             }
-            LayoutNode::Split { direction, left, right, left_weight, right_weight } => {
+            LayoutNode::Split {
+                direction,
+                left,
+                right,
+                left_weight,
+                right_weight,
+            } => {
                 let new_left = left.remove_node(target_id);
                 let new_right = right.remove_node(target_id);
 
                 match (new_left, new_right) {
-                    (Some(l), Some(r)) => {
-                        Some(
-                            LayoutNode::Split { 
-                                direction,
-                                left: Box::new(l),
-                                right: Box::new(r),
-                                left_weight,
-                                right_weight }
-                        )
-                    }
-                    (Some(l), None) => { Some(l) }
-                    (None, Some(r)) => { Some(r) }
-                    (None, None) => { None }
+                    (Some(l), Some(r)) => Some(LayoutNode::Split {
+                        direction,
+                        left: Box::new(l),
+                        right: Box::new(r),
+                        left_weight,
+                        right_weight,
+                    }),
+                    (Some(l), None) => Some(l),
+                    (None, Some(r)) => Some(r),
+                    (None, None) => None,
                 }
             }
         }
@@ -101,9 +102,15 @@ impl LayoutNode {
                 results.insert(*id, area);
                 Ok(())
             }
-            LayoutNode::Split { direction, left, right, left_weight, right_weight } => {
+            LayoutNode::Split {
+                direction,
+                left,
+                right,
+                left_weight,
+                right_weight,
+            } => {
                 let total_weight = left_weight + right_weight;
-                
+
                 match direction {
                     SplitDirection::Vertical => {
                         let left_width = (area.width as u32 * left_weight / total_weight) as u16;
@@ -120,8 +127,8 @@ impl LayoutNode {
                             ..area
                         };
 
-                        debug!("left: {:?} left rect: {:?}", left, left_rect);
-                        debug!("right: {:?} right rect: {:?}", right, right_rect);
+                        trace!("left: {:?} left rect: {:?}", left, left_rect);
+                        trace!("right: {:?} right rect: {:?}", right, right_rect);
 
                         left.calculate_layout(left_rect, results)?;
                         right.calculate_layout(right_rect, results)?;
@@ -142,6 +149,9 @@ impl LayoutNode {
                             ..area
                         };
 
+                        trace!("left: {:?} top rect: {:?}", left, top_rect);
+                        trace!("right: {:?} bottom rect: {:?}", right, bottom_rect);
+
                         left.calculate_layout(top_rect, results)?;
                         right.calculate_layout(bottom_rect, results)?;
                         Ok(())
@@ -151,4 +161,3 @@ impl LayoutNode {
         }
     }
 }
-

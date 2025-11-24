@@ -8,6 +8,7 @@ use crate::{
     actors::session_manager::SessionManagerHandle,
     control_signals::CLEAR,
     input_parser::{self, InputParser},
+    layout::SplitDirection,
     prelude::*,
 };
 
@@ -41,10 +42,7 @@ pub struct ClientConnection {
 }
 impl ClientConnection {
     #[instrument(skip(stream, session_manager_handle))]
-    pub fn spawn(
-        stream: UnixStream,
-        session_manager_handle: SessionManagerHandle,
-    ) -> Result<ClientConnectionHandle> {
+    pub fn spawn(stream: UnixStream, session_manager_handle: SessionManagerHandle) -> Result<ClientConnectionHandle> {
         let client = Self::new(stream, session_manager_handle);
         client.run()
     }
@@ -123,9 +121,13 @@ impl ClientConnection {
                                                         debug!("Client Event Input: kill pane");
                                                         self.session_manager_handle.user_kill_pane(self.id).await.unwrap();
                                                     },
-                                                    ParsedEvents::SplitPane => {
-                                                        debug!("Client Event Input: split pane");
-                                                        self.session_manager_handle.user_split_pane(self.id).await.unwrap();
+                                                    ParsedEvents::SplitPaneHorizontal => {
+                                                        debug!("Client Event Input: horizontal split pane");
+                                                        self.session_manager_handle.user_split_pane(self.id, SplitDirection::Horizontal).await.unwrap();
+                                                    },
+                                                    ParsedEvents::SplitPaneVertical => {
+                                                        debug!("Client Event Input: vertical split pane");
+                                                        self.session_manager_handle.user_split_pane(self.id, SplitDirection::Vertical).await.unwrap();
                                                     },
                                                     ParsedEvents::NextPane => {
                                                         debug!("Client Event Input: next pane");

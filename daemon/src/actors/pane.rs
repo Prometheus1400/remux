@@ -7,7 +7,9 @@ use crate::{
     actors::{
         pty::{Pty, PtyHandle},
         window::WindowHandle,
-    }, layout::Rect, prelude::*
+    },
+    layout::Rect,
+    prelude::*,
 };
 
 #[derive(Handle)]
@@ -15,7 +17,7 @@ pub enum PaneEvent {
     UserInput { bytes: Bytes },
     PtyOutput { bytes: Bytes },
     PtyDied,
-    Render, // uses the diff from prev state to get to desired state (falls back to rerender if no prev state)
+    Render,   // uses the diff from prev state to get to desired state (falls back to rerender if no prev state)
     Rerender, // full rerender
     Resize { rect: Rect },
     Hide,
@@ -83,7 +85,7 @@ impl Pane {
                                 trace!("Pane: PtyOutput({bytes:?}");
                                 match self.handle_pty_output(bytes).await {
                                     Ok(_) => (),
-                                    Err(e) => error!("{}", e)
+                                    Err(e) => error!("{}", e),
                                 }
                             }
                             PtyDied => {
@@ -100,7 +102,7 @@ impl Pane {
                                 trace!("Pane: Render");
                                 match self.handle_render().await {
                                     Ok(_) => (),
-                                    Err(e) => error!("{}", e)
+                                    Err(e) => error!("{}", e),
                                 }
                             }
                             Rerender => {
@@ -108,7 +110,7 @@ impl Pane {
                                 self.handle_rerender().await.unwrap();
                             }
                             Resize { rect } => {
-                                debug!("Pane: Rerender");
+                                debug!("Pane: Resize");
                                 self.handle_resize(rect).await.unwrap();
                             }
                             Hide => {
@@ -164,7 +166,6 @@ impl Pane {
         self.prev_screen_state = Some(screen.clone());
         let mut output = Vec::new();
 
-
         for (i, row) in screen.rows_formatted(0, self.rect.width).enumerate() {
             let cx = self.rect.x + 1;
             let cy = self.rect.y + 1 + (i as u16);
@@ -183,21 +184,16 @@ impl Pane {
         let global_x = self.rect.x + 1 + c_col;
         let global_y = self.rect.y + 1 + c_row;
 
-        self.window_handle.pane_output(
-            self.id,
-            Bytes::from(output),
-            Some((global_x, global_y))
-        ).await
+        self.window_handle
+            .pane_output(self.id, Bytes::from(output), Some((global_x, global_y)))
+            .await
     }
 
     async fn handle_resize(&mut self, rect: Rect) -> Result<()> {
-        let old_state = self.vte.screen().contents_formatted();
-
         self.rect = rect;
-        self.vte = vt100::Parser::new(rect.height, rect.width, 0);
-        self.vte.process(&old_state);
-
         self.pty_handle.resize(rect.height, rect.width).await?;
+        self.vte.screen_mut().set_size(rect.height, rect.width);
+
         self.handle_rerender().await?;
         Ok(())
     }

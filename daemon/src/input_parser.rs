@@ -5,6 +5,7 @@ use crate::prelude::*;
 const CTRL_SPACE: u8 = 0x00;
 const CTRL_B: u8 = 0x02;
 const PERCENT: u8 = 0x25;
+const DOUBLE_QUOTE: u8 = 0x22;
 const N: u8 = 0x6E;
 const P: u8 = 0x70;
 const S: u8 = 0x73;
@@ -14,7 +15,8 @@ pub enum ParsedEvents {
     Raw(Bytes),
     KillPane,
     NextPane,
-    SplitPane,
+    SplitPaneVertical,
+    SplitPaneHorizontal,
     PrevPane,
     RequestSwitchSession, // trigger for UI switch session popup
 }
@@ -47,7 +49,11 @@ impl InputParser {
                         }
                         match b_next {
                             PERCENT => {
-                                events.push(ParsedEvents::SplitPane);
+                                events.push(ParsedEvents::SplitPaneVertical);
+                                self.buf.drain(..2);
+                            }
+                            DOUBLE_QUOTE => {
+                                events.push(ParsedEvents::SplitPaneHorizontal);
                                 self.buf.drain(..2);
                             }
                             N => {
