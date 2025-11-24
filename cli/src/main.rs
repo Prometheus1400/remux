@@ -1,5 +1,6 @@
 mod actors;
 mod args;
+mod state_view;
 mod error;
 mod prelude;
 mod widgets;

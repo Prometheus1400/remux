@@ -11,7 +11,7 @@ use tokio::{
 use tracing::{Instrument, debug};
 
 use crate::{
-    actors::{WidgetRunner, widget_runner::WidgetRunnerHandle},
+    actors::{WidgetRunner, ui::{UI, UIHandle}, widget_runner::WidgetRunnerHandle},
     prelude::*,
 };
 
@@ -42,7 +42,8 @@ pub struct Client {
     stdin_state: StdinState, // for routing stdin to daemon or popup actor
     daemon_events_state: DaemonEventsState, // determines if currently accepting events from daemon
     stdin_tx: mpsc::Sender<Bytes>, // this is for popup actor to connect to stdin
-    widget_runner: WidgetRunnerHandle,
+    widget_runner_handle: WidgetRunnerHandle,
+    ui_handle: UIHandle,
 }
 impl Client {
     #[instrument(skip(stream))]
@@ -55,7 +56,8 @@ impl Client {
         let (tx, rx) = mpsc::channel(100);
         let (stdin_tx, stdin_rx) = mpsc::channel(100);
         let handle = ClientHandle { tx };
-        let widget_runner = WidgetRunner::spawn(stdin_rx, handle.clone())?;
+        let widget_runner_handle = WidgetRunner::spawn(stdin_rx, handle.clone())?;
+        let ui_handle = UI::spawn()?;
         Ok(Self {
             stream,
             handle,
@@ -63,7 +65,8 @@ impl Client {
             stdin_state: StdinState::Daemon,
             daemon_events_state: DaemonEventsState::Unblocked,
             stdin_tx,
-            widget_runner,
+            widget_runner_handle,
+            ui_handle
         })
     }
 
@@ -95,14 +98,15 @@ impl Client {
                                     match event {
                                         DaemonEvent::Raw{bytes} => {
                                             trace!("DaemonEvent(Raw({bytes:?}))");
-                                            stdout.write_all(&bytes).await?;
-                                            stdout.flush().await?;
+                                            // stdout.write_all(&bytes).await?;
+                                            // stdout.flush().await?;
+                                            self.ui_handle.output(Bytes::from(bytes)).await?;
                                         }
                                         DaemonEvent::SwitchSessionOptions{session_ids} => {
                                             debug!("DaemonEvent(SwitchSessionOptions({session_ids:?}))");
                                             self.daemon_events_state = DaemonEventsState::Blocked;
                                             self.stdin_state = StdinState::Popup;
-                                            self.widget_runner.select_session(session_ids).await?;
+                                            self.widget_runner_handle.select_session(session_ids).await?;
                                         }
                                     }
                                 }
