@@ -28,9 +28,6 @@ pub enum SessionManagerEvent {
     ClientDisconnect {
         client_id: u32,
     },
-    ClientRequestSwitchSession {
-        client_id: u32,
-    },
     ClientSwitchSession {
         client_id: u32,
         session_id: u32,
@@ -119,12 +116,6 @@ impl SessionManager {
                                 debug!("SessionManager: ClientDisconnect");
                                 self.handle_client_disconnect(client_id).await.unwrap();
                             }
-                            ClientRequestSwitchSession { client_id } => {
-                                debug!("SessionManager: ClientRequestSwitchSession");
-                                self.handle_client_request_switch_session(client_id)
-                                    .await
-                                    .unwrap();
-                            }
                             ClientSwitchSession {
                                 client_id,
                                 session_id,
@@ -198,8 +189,14 @@ impl SessionManager {
             .entry(session_id)
             .or_insert(vec![]);
         clients.push(client_id);
+        for c in self.clients.values() {
+            c.new_session(session_id).await?;
+        }
         self.client_to_session_mapping.insert(client_id, session_id);
 
+        client_handle
+            .current_sessions(self.sessions.keys().copied().collect())
+            .await?;
         let session_handle = self
             .sessions
             .get_mut(&session_id)
@@ -216,32 +213,18 @@ impl SessionManager {
         }
         Ok(())
     }
-    async fn handle_client_request_switch_session(&mut self, client_id: u32) -> Result<()> {
-        if let Some(client_handle) = self.clients.get(&client_id) {
-            client_handle
-                .respond_request_switch_session(self.sessions.keys().copied().collect())
-                .await?;
-        }
-        Ok(())
-    }
     async fn handle_client_switch_session(
         &mut self,
         client_id: u32,
         session_id: u32,
     ) -> Result<()> {
         let client_handle = self.unmap_client(client_id).unwrap();
-        self.map_client(client_id, client_handle, session_id);
+        self.map_client(client_id, client_handle, session_id)?;
         if let Some(session_handle) = self.sessions.get(&session_id) {
             session_handle.redraw().await?;
         }
-        // let session_id = self.client_to_session_mapping.get(&client_id).unwrap();
-        // let mut clients = self.session_to_client_mapping.get_mut(&session_id).unwrap();
-        // clients.retain(|c| c != &client_id);
-        // if let Some(client_handle) = self.clients.get(&client_id) {
-        //     client_handle
-        //         .respond_request_switch_session(self.sessions.keys().copied().collect())
-        //         .await?;
-        // }
+        let client_handle = self.clients.get(&client_id).unwrap();
+        client_handle.success_attach_to_session(session_id).await?;
         Ok(())
     }
     async fn handle_client_send_user_input(&mut self, client_id: u32, bytes: Bytes) -> Result<()> {
@@ -303,11 +286,6 @@ impl SessionManager {
             .or_insert(vec![]);
         clients.push(client_id);
         self.client_to_session_mapping.insert(client_id, session_id);
-
-        // let session_handle = self
-        //     .sessions
-        //     .get_mut(&session_id)
-        //     .expect("session should exist here");
         Ok(())
     }
 

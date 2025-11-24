@@ -194,7 +194,7 @@ impl Pane {
     async fn handle_resize(&mut self, rect: Rect) -> Result<()> {
         self.rect = rect;
         self.pty_handle.resize(rect).await?;
-        self.vte.screen_mut().set_size(rect.height, rect.width);
+        self.vte.set_size(rect.height, rect.width);
 
         self.handle_rerender().await?;
         Ok(())

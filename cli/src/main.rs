@@ -1,7 +1,9 @@
 mod actors;
 mod args;
 mod error;
+mod input_parser;
 mod prelude;
+mod state_view;
 mod widgets;
 
 use std::io::stdout;
@@ -20,7 +22,7 @@ use remux_core::{
 use tokio::net::UnixStream;
 
 use crate::{
-    actors::client::Client,
+    actors::Client,
     args::{Args, Commands, SessionCommands},
     error::{Error, Result},
     prelude::*,
@@ -109,7 +111,6 @@ async fn attach(mut stream: UnixStream, attach_message: RequestMessage) -> Resul
             source,
         })?;
     debug!("Sent attach request successfully");
-    execute!(stdout(), EnterAlternateScreen)?;
     enable_raw_mode()?;
     debug!("raw mode enabled");
     if let Ok(task) = Client::spawn(stream) {
@@ -124,7 +125,6 @@ async fn attach(mut stream: UnixStream, attach_message: RequestMessage) -> Resul
         }
     }
     disable_raw_mode()?;
-    execute!(stdout(), LeaveAlternateScreen)?;
     debug!("Disabled raw mode");
     Ok(())
 }

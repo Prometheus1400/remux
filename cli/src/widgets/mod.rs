@@ -1,3 +1,5 @@
 mod selector;
+mod traits;
 
-pub use selector::selector_widget;
+pub use selector::SelectorWidget;
+pub use traits::AlternateScreenWidget;

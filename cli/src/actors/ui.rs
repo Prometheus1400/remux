@@ -1,93 +1,102 @@
-use std::io::{Stdout, stdout};
+use std::{io::stdout, time::Duration};
 
 use bytes::Bytes;
 use handle_macro::Handle;
 use ratatui::{Terminal, prelude::CrosstermBackend};
-use tokio::sync::mpsc;
-use tracing::Instrument;
+use tokio::{sync::mpsc, time::interval};
+use tui_term::widget::PseudoTerminal;
+use vt100::Parser;
 
-use crate::{actors::client::ClientHandle, prelude::*, widgets};
+use crate::{prelude::*, state_view::StateView};
 
 #[derive(Handle)]
-pub enum UiEvent {
-    SelectSession { session_ids: Vec<u32> },
+pub enum UIEvent {
+    Output(Bytes),
+    ClearTerminal,
     Kill,
+    SyncStateView(StateView),
 }
-use UiEvent::*;
+use UIEvent::*;
 
-#[derive(Debug)]
-pub struct Ui {
-    handle: UiHandle,
-    rx: mpsc::Receiver<UiEvent>,
-    client_handle: ClientHandle,
-    terminal: Terminal<CrosstermBackend<Stdout>>,
-    stdin_rx: mpsc::Receiver<Bytes>,
+pub struct UI {
+    state_view: StateView,
+    parser: Parser,
+    handle: UIHandle,
+    rx: mpsc::Receiver<UIEvent>,
 }
-impl Ui {
-    #[instrument(skip(stdin_rx, client_handle))]
-    pub fn spawn(stdin_rx: mpsc::Receiver<Bytes>, client_handle: ClientHandle) -> Result<UiHandle> {
-        Ui::new(stdin_rx, client_handle)?.run()
+
+impl UI {
+    pub fn spawn() -> Result<UIHandle> {
+        Self::new().run()
     }
-
-    #[instrument(skip(stdin_rx, client_handle))]
-    fn new(stdin_rx: mpsc::Receiver<Bytes>, client_handle: ClientHandle) -> Result<Self> {
-        let (tx, rx) = mpsc::channel(10);
-        let handle = UiHandle { tx };
-        let terminal = Terminal::new(CrosstermBackend::new(stdout()))?;
-        Ok(Self {
-            stdin_rx,
-            handle,
+    fn new() -> Self {
+        let (tx, rx) = mpsc::channel(100);
+        let handle = UIHandle { tx };
+        let parser = vt100::Parser::default();
+        Self {
+            state_view: StateView::default(),
             rx,
-            client_handle,
-            terminal,
-        })
+            handle,
+            parser,
+        }
     }
-
-    #[instrument(skip(self))]
-    fn run(mut self) -> Result<UiHandle> {
-        let span = tracing::Span::current();
+    pub fn run(mut self) -> Result<UIHandle> {
         let handle_clone = self.handle.clone();
-        tokio::spawn({
+
+        let mut term = Terminal::new(CrosstermBackend::new(stdout())).unwrap();
+        term.clear()?;
+
+        let _: CliTask = tokio::spawn({
             async move {
+                let mut ticker = interval(Duration::from_millis(16));
                 loop {
-                    if let Some(event) = self.rx.recv().await {
-                        match event {
-                            SelectSession { session_ids } => {
-                                debug!("SelectSession");
-                                self.handle_select_session(session_ids).await?;
+                    tokio::select! {
+                        Some(event) = self.rx.recv() => {
+                            match event {
+                                Output(bytes) => {
+                                    self.parser.process(&bytes);
+                                }
+                                ClearTerminal => {
+                                    self.parser.process(b"\x1b[H\x1b[2J");
+                                }
+                                SyncStateView(state_view) => {
+                                    self.state_view = state_view;
+                                }
+                                Kill => {
+                                    break;
+                                }
                             }
-                            Kill => {
-                                debug!("Kill");
-                                break;
-                            }
+                        }
+                        _ = ticker.tick() => {
+                            let screen = self.parser.screen();
+                            term.draw(|f| {
+                                // 1. Create the blocks
+                                let chunks = ratatui::layout::Layout::default()
+                                    .direction(ratatui::layout::Direction::Vertical)
+                                    .constraints([
+                                        ratatui::layout::Constraint::Min(1),      // pseudo terminal takes everything else
+                                        ratatui::layout::Constraint::Length(1),   // bottom status bar
+                                    ])
+                                    .split(f.area());
+
+                                // 2. Render pseudo terminal in the upper chunk
+                                let term_ui = PseudoTerminal::new(screen);
+                                f.render_widget(term_ui, chunks[0]);
+
+                                // 3. Render a simple 1-line status bar
+                                if let Some(active_session_id) = self.state_view.active_session {
+                                let bar = ratatui::widgets::Paragraph::new(format!("current session: {}, all sessions: {:?}", active_session_id, self.state_view.session_ids))
+                                    .style(ratatui::style::Style::default().bg(ratatui::style::Color::Black));
+                                    f.render_widget(bar, chunks[1]);
+                                }
+                            })?;
                         }
                     }
                 }
-                debug!("Popup actor stopping");
-                Result::Ok(())
+                Ok(())
             }
-            .instrument(span)
         });
 
         Ok(handle_clone)
-    }
-
-    async fn handle_select_session(&mut self, session_ids: Vec<u32>) -> Result<()> {
-        let session_id_strs: Vec<String> = session_ids.iter().map(|i| i.to_string()).collect();
-        if let Some(index) = widgets::selector_widget(
-            &mut self.terminal,
-            &mut self.stdin_rx,
-            &session_id_strs,
-            "Select Session",
-        )
-        .await
-        {
-            self.client_handle
-                .send_switch_session(session_ids.get(index).copied())
-                .await?;
-        } else {
-            self.client_handle.send_switch_session(None).await?
-        }
-        Ok(())
     }
 }

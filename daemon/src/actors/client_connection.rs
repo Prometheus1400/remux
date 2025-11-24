@@ -5,10 +5,7 @@ use tokio::{io::AsyncWriteExt, net::UnixStream, sync::mpsc};
 use tracing::Instrument;
 
 use crate::{
-    actors::session_manager::SessionManagerHandle,
-    control_signals::CLEAR,
-    input_parser::{self, InputParser},
-    layout::SplitDirection,
+    actors::session_manager::SessionManagerHandle, control_signals::CLEAR, layout::SplitDirection,
     prelude::*,
 };
 
@@ -17,10 +14,11 @@ use crate::{
 pub enum ClientConnectionEvent {
     AttachToSession { session_id: u32 },
     SuccessAttachToSession { session_id: u32 },
-    RespondRequestSwitchSession { session_ids: Vec<u32> },
     FailedAttachToSession { session_id: u32 },
     DetachFromSession { session_id: u32 },
     SessionOutput { bytes: Bytes },
+    NewSession(u32),
+    CurrentSessions(Vec<u32>),
 }
 use ClientConnectionEvent::*;
 
@@ -38,7 +36,6 @@ pub struct ClientConnection {
     rx: mpsc::Receiver<ClientConnectionEvent>,
     session_manager_handle: SessionManagerHandle,
     state: ClientConnectionState,
-    input_parser: InputParser,
 }
 impl ClientConnection {
     #[instrument(skip(stream, session_manager_handle))]
@@ -61,7 +58,6 @@ impl ClientConnection {
             rx,
             session_manager_handle,
             state: ClientConnectionState::Unattached,
-            input_parser: InputParser::new(),
         }
     }
     #[instrument(skip(self), fields(client_id = self.id))]
@@ -84,6 +80,7 @@ impl ClientConnection {
                                 SuccessAttachToSession{session_id} => {
                                     debug!("Client: SuccessAttachToSession");
                                     self.state = ClientConnectionState::Attached(session_id);
+                                    communication::send_event(&mut self.stream, DaemonEvent::ActiveSession(session_id)).await.unwrap();
                                 }
                                 FailedAttachToSession{..} => {
                                     debug!("Client: FailedAttachToSession");
@@ -98,13 +95,17 @@ impl ClientConnection {
                                     self.stream.write_all(CLEAR).await.unwrap();
                                     // break;
                                 }
-                                RespondRequestSwitchSession { session_ids } => {
-                                    debug!("Client: RespondRequestSwitchSession");
-                                    communication::send_event(&mut self.stream, DaemonEvent::SwitchSessionOptions { session_ids }).await.unwrap();
-                                }
                                 SessionOutput{bytes} => {
                                     trace!("Client: SessionOutput");
                                     communication::send_event(&mut self.stream, DaemonEvent::Raw{bytes: bytes.into()}).await.unwrap();
+                                }
+                                NewSession(session_id) => {
+                                    trace!("Client: NewSession");
+                                    communication::send_event(&mut self.stream, DaemonEvent::NewSession(session_id)).await.unwrap();
+                                }
+                                CurrentSessions(session_ids) => {
+                                    trace!("Client: NewSession");
+                                    communication::send_event(&mut self.stream, DaemonEvent::CurrentSessions(session_ids)).await.unwrap();
                                 }
                             }
                         },
@@ -112,41 +113,30 @@ impl ClientConnection {
                             match res {
                                 Ok(event) => {
                                     match event {
-                                        CliEvent::Raw{bytes} => {
-                                            for event in self.input_parser.process(&bytes) {
-                                                use input_parser::ParsedEvents;
-                                                match event {
-                                                    ParsedEvents::Raw(bytes) => {
-                                                        trace!("Client Event Input: raw({bytes:?})");
-                                                        self.session_manager_handle.user_input(self.id, bytes).await.unwrap();
-                                                    },
-                                                    ParsedEvents::KillPane => {
-                                                        debug!("Client Event Input: kill pane");
-                                                        self.session_manager_handle.user_kill_pane(self.id).await.unwrap();
-                                                    },
-                                                    ParsedEvents::SplitPaneHorizontal => {
-                                                        debug!("Client Event Input: horizontal split pane");
-                                                        self.session_manager_handle.user_split_pane(self.id, SplitDirection::Horizontal).await.unwrap();
-                                                    },
-                                                    ParsedEvents::SplitPaneVertical => {
-                                                        debug!("Client Event Input: vertical split pane");
-                                                        self.session_manager_handle.user_split_pane(self.id, SplitDirection::Vertical).await.unwrap();
-                                                    },
-                                                    ParsedEvents::NextPane => {
-                                                        debug!("Client Event Input: next pane");
-                                                        self.session_manager_handle.user_iterate_pane(self.id, true).await.unwrap();
-                                                    },
-                                                    ParsedEvents::PrevPane => {
-                                                        debug!("Client Event Input: prev pane");
-                                                        self.session_manager_handle.user_iterate_pane(self.id, false).await.unwrap();
-                                                    },
-                                                    ParsedEvents::RequestSwitchSession => {
-                                                        debug!("Client Event Input: request switch session");
-                                                        self.session_manager_handle.client_request_switch_session(self.id).await.unwrap();
-                                                    }
-                                                }
-                                            }
-                                        }
+                                        CliEvent::Raw(bytes) => {
+                                            trace!("Client Event Input: raw({bytes:?})");
+                                            self.session_manager_handle.user_input(self.id, Bytes::from(bytes)).await.unwrap();
+                                        },
+                                        CliEvent::KillPane => {
+                                            debug!("Client Event Input: kill pane");
+                                            self.session_manager_handle.user_kill_pane(self.id).await.unwrap();
+                                        },
+                                        CliEvent::SplitPaneHorizontal => {
+                                            debug!("Client Event Input: horizontal split pane");
+                                            self.session_manager_handle.user_split_pane(self.id, SplitDirection::Horizontal).await.unwrap();
+                                        },
+                                        CliEvent::SplitPaneVertical => {
+                                            debug!("Client Event Input: vertical split pane");
+                                            self.session_manager_handle.user_split_pane(self.id, SplitDirection::Vertical).await.unwrap();
+                                        },
+                                        CliEvent::NextPane => {
+                                            debug!("Client Event Input: next pane");
+                                            self.session_manager_handle.user_iterate_pane(self.id, true).await.unwrap();
+                                        },
+                                        CliEvent::PrevPane => {
+                                            debug!("Client Event Input: prev pane");
+                                            self.session_manager_handle.user_iterate_pane(self.id, false).await.unwrap();
+                                        },
                                         CliEvent::SwitchSession {session_id} => {
                                             debug!("Client Event Input: SwitchSession{session_id}");
                                             self.session_manager_handle.client_switch_session(self.id, session_id).await.unwrap();
