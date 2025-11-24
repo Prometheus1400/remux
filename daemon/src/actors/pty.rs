@@ -74,15 +74,9 @@ impl Pty {
             Parent { child, master } => {
                 debug!("child PID: {}", child.as_raw());
                 set_fd_nonblocking(&master)?;
-                let handle = PtyHandle {
-                    tx: self.tx.clone(),
-                };
+                let handle = PtyHandle { tx: self.tx.clone() };
                 let async_fd = AsyncFd::new(master)?;
-                set_winsize(
-                    async_fd.get_ref().as_raw_fd(),
-                    self.rect.height,
-                    self.rect.width,
-                )?;
+                set_winsize(async_fd.get_ref().as_raw_fd(), self.rect.height, self.rect.width)?;
                 let _task: DaemonTask = tokio::spawn({
                     let handler = handle.clone();
                     async move {

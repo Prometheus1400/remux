@@ -32,10 +32,7 @@ pub struct WidgetRunner {
 }
 
 impl WidgetRunner {
-    pub fn spawn(
-        stdin_rx: mpsc::Receiver<Bytes>,
-        client_handle: ClientHandle,
-    ) -> Result<WidgetRunnerHandle> {
+    pub fn spawn(stdin_rx: mpsc::Receiver<Bytes>, client_handle: ClientHandle) -> Result<WidgetRunnerHandle> {
         Self::new(stdin_rx, client_handle)?.run()
     }
 
@@ -65,10 +62,7 @@ impl WidgetRunner {
                             WidgetRunnerEvent::SelectSession { items } => {
                                 let viewable_items = items.iter().map(|i| i.to_string()).collect();
                                 if let Some(index) = self
-                                    .run_in_alt_context(SelectorWidget::new(
-                                        viewable_items,
-                                        "Select Session",
-                                    ))
+                                    .run_in_alt_context(SelectorWidget::new(viewable_items, "Select Session"))
                                     .await
                                 {
                                     let session_id = items[index];

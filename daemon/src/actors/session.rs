@@ -116,9 +116,7 @@ impl Session {
     }
 
     async fn handle_window_output(&self, bytes: Bytes) -> Result<()> {
-        self.session_manager_handle
-            .session_send_output(self.id, bytes)
-            .await
+        self.session_manager_handle.session_send_output(self.id, bytes).await
     }
 
     async fn handle_new_connection(&self) -> Result<()> {

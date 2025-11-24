@@ -118,9 +118,7 @@ mod test {
         });
 
         // Connect client
-        let mut client = UnixStream::connect(addr.as_pathname().unwrap())
-            .await
-            .unwrap();
+        let mut client = UnixStream::connect(addr.as_pathname().unwrap()).await.unwrap();
         write_message(
             &mut client,
             &RequestMessage::body(RequestBody::Attach { session_id: 1 }),

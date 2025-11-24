@@ -44,11 +44,7 @@ where
         term.backend_mut().execute(EnterAlternateScreen).ok()?;
         term.backend_mut().execute(Hide).ok()?;
         term.clear();
-        let list_items: Vec<ListItem> = self
-            .items
-            .iter()
-            .map(|i| ListItem::new(i.to_string()))
-            .collect();
+        let list_items: Vec<ListItem> = self.items.iter().map(|i| ListItem::new(i.to_string())).collect();
         let mut state = ListState::default().with_selected(Some(0));
         loop {
             term.draw(|f| {
