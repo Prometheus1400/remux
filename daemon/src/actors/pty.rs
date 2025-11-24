@@ -1,16 +1,16 @@
 use std::{
     ffi::CString,
-    os::fd::{AsRawFd, OwnedFd},
+    os::fd::{AsRawFd, OwnedFd, RawFd},
 };
 
 use bytes::Bytes;
 use handle_macro::Handle;
 use nix::{
     errno::Errno,
-    libc::{F_GETFL, F_SETFL, O_NONBLOCK, fcntl},
+    libc::{F_GETFL, F_SETFL, O_NONBLOCK, TIOCSWINSZ, fcntl, ioctl},
     pty::{
         ForkptyResult::{Child, Parent},
-        forkpty,
+        Winsize, forkpty,
     },
     sys::{
         signal::{Signal, kill},
@@ -21,12 +21,13 @@ use nix::{
 use tokio::{io::unix::AsyncFd, sync::mpsc};
 use tracing::Instrument;
 
-use crate::{actors::pane::PaneHandle, prelude::*};
+use crate::{actors::pane::PaneHandle, layout::Rect, prelude::*};
 
 #[derive(Debug, Clone, Handle)]
 pub enum PtyEvent {
     Kill,
     Input { bytes: Bytes },
+    Resize { rect: Rect },
 }
 use PtyEvent::*;
 
@@ -38,16 +39,17 @@ pub struct Pty {
     pty_tx: mpsc::UnboundedSender<Bytes>,
     pty_rx: mpsc::UnboundedReceiver<Bytes>,
     pane_handle: PaneHandle,
+    rect: Rect,
 }
 impl Pty {
     #[instrument(skip(pane_handle))]
-    pub fn spawn(pane_handle: PaneHandle) -> Result<PtyHandle> {
-        let pty = Pty::new(pane_handle);
+    pub fn spawn(pane_handle: PaneHandle, rect: Rect) -> Result<PtyHandle> {
+        let pty = Pty::new(pane_handle, rect);
         pty.run()
     }
 
     #[instrument(skip(pane_handle))]
-    fn new(pane_handle: PaneHandle) -> Self {
+    fn new(pane_handle: PaneHandle, rect: Rect) -> Self {
         let (tx, rx) = mpsc::channel::<PtyEvent>(10);
         let (pty_tx, pty_rx) = mpsc::unbounded_channel::<Bytes>();
         Self {
@@ -56,6 +58,7 @@ impl Pty {
             pty_tx,
             pty_rx,
             pane_handle,
+            rect,
         }
     }
 
@@ -75,6 +78,11 @@ impl Pty {
                     tx: self.tx.clone(),
                 };
                 let async_fd = AsyncFd::new(master)?;
+                set_winsize(
+                    async_fd.get_ref().as_raw_fd(),
+                    self.rect.height,
+                    self.rect.width,
+                )?;
                 let _task: DaemonTask = tokio::spawn({
                     let handler = handle.clone();
                     async move {
@@ -132,6 +140,10 @@ impl Pty {
                                             trace!("Pty: Input({bytes:?}");
                                             self.handle_input(bytes.clone())
                                         },
+                                        Resize { rect } => {
+                                            debug!("Pty: Resize");
+                                            self.handle_resize(async_fd.get_ref().as_raw_fd(), rect)
+                                        }
                                     };
                                     if let Err(e) = res {
                                         error!("error handling {event:?} in PtyProcess: {e}");
@@ -155,7 +167,9 @@ impl Pty {
                             Err(err) => error!("waitpid failed: {}", err),
                         }
                         debug!("stopping PtyProcess run");
-                        self.pane_handle.pty_died().await.unwrap();
+                        if let Err(e) = self.pane_handle.pty_died().await {
+                            warn!("Could not notify pane that PTY died (Pane has likely already died) {}", e);
+                        }
                         Ok(())
                     }.instrument(span)
                 });
@@ -176,6 +190,23 @@ impl Pty {
         info!("killing pty child process {child}");
         Ok(())
     }
+
+    fn handle_resize(&mut self, raw_fd: RawFd, rect: Rect) -> Result<()> {
+        self.rect = rect;
+        set_winsize(raw_fd, rect.height, rect.width)?;
+        Ok(())
+    }
+}
+
+fn set_winsize(fd: RawFd, rows: u16, cols: u16) -> Result<()> {
+    let ws = Winsize {
+        ws_row: rows,
+        ws_col: cols,
+        ws_xpixel: 0, // unused
+        ws_ypixel: 0, // unused
+    };
+    unsafe { ioctl(fd, TIOCSWINSZ, &ws) };
+    Ok(())
 }
 
 fn set_fd_nonblocking(owned_fd: &OwnedFd) -> Result<()> {

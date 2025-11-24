@@ -11,6 +11,7 @@ use crate::{
         session::{Session, SessionHandle},
     },
     error::Result,
+    layout::SplitDirection,
     prelude::*,
 };
 
@@ -42,6 +43,11 @@ pub enum SessionManagerEvent {
     },
     UserSplitPane {
         client_id: u32,
+        direction: SplitDirection,
+    },
+    UserIteratePane {
+        client_id: u32,
+        is_next: bool,
     },
     UserKillPane {
         client_id: u32,
@@ -134,9 +140,20 @@ impl SessionManager {
                                     .await
                                     .unwrap();
                             }
-                            UserSplitPane { client_id } => {
+                            UserSplitPane {
+                                client_id,
+                                direction,
+                            } => {
                                 debug!("SessionManager: UserSplitPane");
-                                self.handle_client_split_pane(client_id).await.unwrap();
+                                self.handle_client_split_pane(client_id, direction)
+                                    .await
+                                    .unwrap();
+                            }
+                            UserIteratePane { client_id, is_next } => {
+                                debug!("SessionManager: UserIteratePane");
+                                self.handle_client_iterate_pane(client_id, is_next)
+                                    .await
+                                    .unwrap();
                             }
                             UserKillPane { client_id } => {
                                 debug!("SessionManager: UserKillPane");
@@ -238,15 +255,28 @@ impl SessionManager {
     async fn handle_client_kill_pane(&mut self, client_id: u32) -> Result<()> {
         if let Some(session_id) = self.client_to_session_mapping.get(&client_id) {
             let session_handle = self.sessions.get_mut(session_id).unwrap();
-            session_handle.kill().await
+            session_handle.user_kill_pane().await
         } else {
             Ok(())
         }
     }
-    async fn handle_client_split_pane(&mut self, client_id: u32) -> Result<()> {
+    async fn handle_client_split_pane(
+        &mut self,
+        client_id: u32,
+        direction: SplitDirection,
+    ) -> Result<()> {
         if let Some(session_id) = self.client_to_session_mapping.get(&client_id) {
             let session_handle = self.sessions.get_mut(session_id).unwrap();
-            session_handle.user_split_pane().await
+            session_handle.user_split_pane(direction).await
+        } else {
+            // TODO: should error
+            Ok(())
+        }
+    }
+    async fn handle_client_iterate_pane(&mut self, client_id: u32, is_next: bool) -> Result<()> {
+        if let Some(session_id) = self.client_to_session_mapping.get(&client_id) {
+            let session_handle = self.sessions.get_mut(session_id).unwrap();
+            session_handle.user_iterate_pane(is_next).await
         } else {
             // TODO: should error
             Ok(())

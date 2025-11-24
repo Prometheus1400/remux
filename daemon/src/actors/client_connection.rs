@@ -8,6 +8,7 @@ use crate::{
     actors::session_manager::SessionManagerHandle,
     control_signals::CLEAR,
     input_parser::{self, InputParser},
+    layout::SplitDirection,
     prelude::*,
 };
 
@@ -123,9 +124,21 @@ impl ClientConnection {
                                                         debug!("Client Event Input: kill pane");
                                                         self.session_manager_handle.user_kill_pane(self.id).await.unwrap();
                                                     },
-                                                    ParsedEvents::SplitPane => {
-                                                        debug!("Client Event Input: split pane");
-                                                        self.session_manager_handle.user_split_pane(self.id).await.unwrap();
+                                                    ParsedEvents::SplitPaneHorizontal => {
+                                                        debug!("Client Event Input: horizontal split pane");
+                                                        self.session_manager_handle.user_split_pane(self.id, SplitDirection::Horizontal).await.unwrap();
+                                                    },
+                                                    ParsedEvents::SplitPaneVertical => {
+                                                        debug!("Client Event Input: vertical split pane");
+                                                        self.session_manager_handle.user_split_pane(self.id, SplitDirection::Vertical).await.unwrap();
+                                                    },
+                                                    ParsedEvents::NextPane => {
+                                                        debug!("Client Event Input: next pane");
+                                                        self.session_manager_handle.user_iterate_pane(self.id, true).await.unwrap();
+                                                    },
+                                                    ParsedEvents::PrevPane => {
+                                                        debug!("Client Event Input: prev pane");
+                                                        self.session_manager_handle.user_iterate_pane(self.id, false).await.unwrap();
                                                     },
                                                     ParsedEvents::RequestSwitchSession => {
                                                         debug!("Client Event Input: request switch session");

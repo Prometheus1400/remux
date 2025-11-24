@@ -1,4 +1,7 @@
+use std::{collections::HashMap, mem};
+
 use bytes::Bytes;
+use crossterm::terminal;
 use handle_macro::Handle;
 use tokio::sync::mpsc;
 use tracing::Instrument;
@@ -8,13 +11,27 @@ use crate::{
         pane::{Pane, PaneHandle},
         session::SessionHandle,
     },
+    layout::{LayoutNode, Rect, SplitDirection},
     prelude::*,
 };
 
 #[derive(Handle)]
 pub enum WindowEvent {
-    UserInput { bytes: Bytes },  // input from user
-    PaneOutput { bytes: Bytes }, // output from pane
+    UserInput {
+        bytes: Bytes,
+    }, // input from user
+    PaneOutput {
+        id: usize,
+        bytes: Bytes,
+        cursor: Option<(u16, u16)>,
+    }, // output from pane
+    IteratePane {
+        is_next: bool,
+    },
+    SplitPane {
+        direction: SplitDirection,
+    },
+    KillPane,
     Redraw,
     Kill,
 }
@@ -31,19 +48,174 @@ pub struct Window {
     session_handle: SessionHandle,
     handle: WindowHandle,
     rx: mpsc::Receiver<WindowEvent>,
-    pane_handle: PaneHandle, // TODO: handle more panes
+
+    layout: LayoutNode,
+    layout_sizing_map: HashMap<usize, Rect>,
+    panes: HashMap<usize, PaneHandle>,
+    pane_cursors: HashMap<usize, (u16, u16)>,
+    active_pane_id: usize,
+    next_pane_id: usize,
+    root_rect: Rect,
+
     #[allow(unused)]
     window_state: WindowState,
 }
 impl Window {
     async fn handle_user_input(&mut self, bytes: Bytes) -> Result<()> {
-        self.pane_handle.user_input(bytes).await
+        if let Some(pane) = self.panes.get(&self.active_pane_id) {
+            pane.user_input(bytes).await?;
+        }
+        Ok(())
     }
-    async fn handle_pane_output(&mut self, bytes: Bytes) -> Result<()> {
-        self.session_handle.window_output(bytes).await
+    async fn handle_pane_output(
+        &mut self,
+        id: usize,
+        bytes: Bytes,
+        cursor: Option<(u16, u16)>,
+    ) -> Result<()> {
+        if let Some(pos) = cursor {
+            self.pane_cursors.insert(id, pos);
+        }
+
+        self.session_handle.window_output(bytes).await?;
+
+        if let Some(&(active_x, active_y)) = self.pane_cursors.get(&self.active_pane_id) {
+            let restore_cursor = format!("\x1b[{};{}H", active_y, active_x);
+            self.session_handle
+                .window_output(Bytes::from(restore_cursor))
+                .await?;
+        }
+
+        Ok(())
     }
     async fn handle_redraw(&mut self) -> Result<()> {
-        self.pane_handle.rerender().await
+        for pane in self.panes.values() {
+            pane.rerender().await?;
+        }
+        Ok(())
+    }
+    async fn handle_iterate_pane(&mut self, is_next: bool) -> Result<()> {
+        let mut ids: Vec<usize> = self.panes.keys().copied().collect();
+        if ids.is_empty() {
+            return Ok(());
+        }
+        ids.sort();
+
+        let current_idx = ids
+            .iter()
+            .position(|&id| id == self.active_pane_id)
+            .unwrap_or(0);
+
+        let new_idx = if is_next {
+            (current_idx + 1) % ids.len()
+        } else {
+            if current_idx == 0 {
+                ids.len() - 1
+            } else {
+                current_idx - 1
+            }
+        };
+
+        self.active_pane_id = ids[new_idx];
+        debug!("Switched to Pane ID: {}", self.active_pane_id);
+        let (tx, ty) = if let Some(&pos) = self.pane_cursors.get(&self.active_pane_id) {
+            pos
+        } else {
+            if let Some(rect) = self.layout_sizing_map.get(&self.active_pane_id) {
+                (rect.x + 1, rect.y + 1)
+            } else {
+                warn!("Active pane has no rect in layout map!");
+                return Ok(());
+            }
+        };
+
+        let move_cursor = format!("\x1b[{};{}H", ty, tx);
+        self.session_handle
+            .window_output(Bytes::from(move_cursor))
+            .await?;
+
+        Ok(())
+    }
+    async fn handle_split_pane(&mut self, direction: SplitDirection) -> Result<()> {
+        self.layout
+            .add_split(self.active_pane_id, self.next_pane_id, direction);
+        self.layout
+            .calculate_layout(self.root_rect, &mut self.layout_sizing_map)?;
+
+        // new pane rect
+        if let Some(rect) = self.layout_sizing_map.get(&self.next_pane_id) {
+            let pane_handle = Pane::spawn(self.handle.clone(), self.next_pane_id, *rect)?;
+            self.panes.insert(self.next_pane_id, pane_handle);
+        }
+
+        self.active_pane_id = self.next_pane_id;
+        self.next_pane_id += 1;
+
+        for (id, pane) in self.panes.iter() {
+            if let Some(new_rect) = self.layout_sizing_map.get(id) {
+                pane.resize(*new_rect).await?;
+            }
+        }
+
+        self.session_handle
+            .window_output(Bytes::from(
+                crossterm::terminal::Clear(crossterm::terminal::ClearType::All).to_string(),
+            ))
+            .await?;
+        self.handle_redraw().await?;
+        Ok(())
+    }
+    async fn handle_kill_pane(&mut self) -> Result<()> {
+        let dead_pane_id = self.active_pane_id;
+        if self.panes.len() <= 1 {
+            // TODO: kill window if last pane is killed
+            warn!("Can't kill last pane {}", dead_pane_id);
+            return Ok(());
+        }
+
+        debug!("Killing pane {}", dead_pane_id);
+        if let Some(pane_handle) = self.panes.get(&dead_pane_id) {
+            if let Err(e) = pane_handle.kill().await {
+                error!("Error while killing pane! {}", e);
+            }
+        }
+
+        self.panes.remove(&dead_pane_id);
+        self.pane_cursors.remove(&dead_pane_id);
+        self.layout_sizing_map.remove(&dead_pane_id);
+
+        let dummy_node = LayoutNode::Pane { id: 0 };
+        let old_layout = mem::replace(&mut self.layout, dummy_node);
+
+        if let Some(new_layout) = old_layout.remove_node(dead_pane_id) {
+            self.layout = new_layout;
+        } else {
+            info!("No panes left.");
+            return Ok(());
+        }
+
+        if let Some(&new_id) = self.panes.keys().next() {
+            self.active_pane_id = new_id;
+        }
+
+        self.layout_sizing_map.clear();
+        self.layout
+            .calculate_layout(self.root_rect, &mut self.layout_sizing_map)?;
+
+        for (id, pane) in self.panes.iter() {
+            if let Some(new_rect) = self.layout_sizing_map.get(id) {
+                pane.resize(*new_rect).await?;
+            }
+        }
+
+        self.session_handle
+            .window_output(Bytes::from(
+                crossterm::terminal::Clear(crossterm::terminal::ClearType::All).to_string(),
+            ))
+            .await?;
+        self.handle_redraw().await?;
+
+        Ok(())
     }
 }
 impl Window {
@@ -56,13 +228,43 @@ impl Window {
     fn new(session_handle: SessionHandle) -> Result<Self> {
         let (tx, rx) = mpsc::channel(10);
         let handle = WindowHandle { tx };
-        let pane_handle = Pane::spawn(handle.clone())?;
+
+        let init_pane_id = 0;
+        let init_layout_node = LayoutNode::Pane { id: init_pane_id };
+
+        let (cols, rows) = match terminal::size() {
+            Ok((c, r)) => (c, r),
+            Err(_) => (80, 24),
+        };
+
+        let root_rect = Rect {
+            x: 0,
+            y: 0,
+            width: cols,
+            height: rows,
+        };
+        let mut layout_sizing_map = HashMap::new();
+        layout_sizing_map.insert(init_pane_id, root_rect);
+        init_layout_node.calculate_layout(root_rect, &mut layout_sizing_map)?;
+
+        let mut panes = HashMap::new();
+        if let Some(rect) = layout_sizing_map.get(&init_pane_id) {
+            let pane_handle = Pane::spawn(handle.clone(), init_pane_id, *rect)?;
+            panes.insert(init_pane_id, pane_handle);
+        }
+
         Ok(Self {
             session_handle,
             handle,
             rx,
-            pane_handle,
+            layout: init_layout_node,
+            layout_sizing_map,
+            panes,
+            active_pane_id: init_pane_id,
+            next_pane_id: init_pane_id + 1,
             window_state: WindowState::Focused,
+            pane_cursors: HashMap::new(),
+            root_rect,
         })
     }
     #[instrument(skip(self))]
@@ -78,9 +280,21 @@ impl Window {
                                 trace!("Window: UserInput");
                                 self.handle_user_input(bytes).await.unwrap();
                             }
-                            PaneOutput { bytes } => {
+                            PaneOutput { id, bytes, cursor } => {
                                 trace!("Window: PaneOutput");
-                                self.handle_pane_output(bytes).await.unwrap();
+                                self.handle_pane_output(id, bytes, cursor).await.unwrap();
+                            }
+                            IteratePane { is_next } => {
+                                debug!("Window: IteratePane");
+                                self.handle_iterate_pane(is_next).await.unwrap();
+                            }
+                            SplitPane { direction } => {
+                                debug!("Window: SplitPane");
+                                self.handle_split_pane(direction).await.unwrap();
+                            }
+                            KillPane => {
+                                debug!("Window: IteratePane");
+                                self.handle_kill_pane().await.unwrap();
                             }
                             Redraw => {
                                 debug!("Window: Redraw");
@@ -88,7 +302,9 @@ impl Window {
                             }
                             Kill => {
                                 debug!("Window: Kill");
-                                self.pane_handle.kill().await.unwrap();
+                                for pane in self.panes.values() {
+                                    pane.kill().await.unwrap();
+                                }
                                 break;
                             }
                         }

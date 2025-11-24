@@ -10,6 +10,7 @@ handle-macro = {path = "../handle-macro"}
 remux-core = { path = "../core" }
 
 bytes.workspace = true
+crossterm.workspace = true
 itertools.workspace = true
 serde.workspace = true
 thiserror.workspace = true

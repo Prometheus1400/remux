@@ -815,6 +815,7 @@ name = "remux-daemon"
 version = "0.1.0"
 dependencies = [
  "bytes",
+ "crossterm 0.29.0",
  "handle-macro",
  "itertools 0.14.0",
  "nix",
