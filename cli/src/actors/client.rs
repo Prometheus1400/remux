@@ -18,7 +18,7 @@ use crate::{
         WidgetRunner,
         ui::{UI, UIHandle},
         widget_runner::WidgetRunnerHandle,
-    }, cli_event_parser::{InputParser, LocalAction, ParsedEvent}, prelude::*, state_view::StateView
+    }, input_parser::{InputParser, LocalAction, ParsedEvent}, prelude::*, state_view::StateView
 };
 
 #[derive(Handle)]

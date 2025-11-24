@@ -1,6 +1,6 @@
 mod actors;
 mod args;
-mod cli_event_parser;
+mod input_parser;
 mod error;
 mod prelude;
 mod state_view;

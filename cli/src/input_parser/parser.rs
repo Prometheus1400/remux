@@ -1,6 +1,6 @@
 use remux_core::events::CliEvent;
 
-use crate::prelude::*;
+use crate::{input_parser::events::{LocalAction, ParsedEvent}, prelude::*};
 
 const CTRL_SPACE: u8 = 0x00;
 const CTRL_B: u8 = 0x02;
@@ -11,14 +11,6 @@ const P: u8 = 0x70;
 const S: u8 = 0x73;
 const X: u8 = 0x78;
 
-pub enum ParsedEvent {
-    LocalAction(LocalAction),
-    DaemonAction(CliEvent),
-}
-
-pub enum LocalAction {
-    SwitchSession, 
-}
 
 #[derive(Debug)]
 pub struct InputParser {
