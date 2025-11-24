@@ -16,6 +16,7 @@ use crate::{
 pub enum WindowEvent {
     UserInput { bytes: Bytes },  // input from user
     PaneOutput { id: usize, bytes: Bytes, cursor: Option<(u16, u16)> }, // output from pane
+    IteratePane { is_next: bool },
     Redraw,
     Kill,
 }
@@ -38,6 +39,7 @@ pub struct Window {
     panes: HashMap<usize, PaneHandle>,
     pane_cursors: HashMap<usize, (u16, u16)>,
     active_pane_id: usize,
+    max_pane_id: usize,
     next_pane_id: usize,
 
     #[allow(unused)]
@@ -68,6 +70,48 @@ impl Window {
         for pane in self.panes.values() {
             pane.rerender().await?;
         }
+        Ok(())
+    }
+    async fn handle_iterate_pane(&mut self, is_next: bool) -> Result<()> {
+        let mut ids: Vec<usize> = self.panes.keys().copied().collect();
+        if ids.is_empty() { return Ok(()); } // Guard against empty window
+        ids.sort();
+
+        // 2. Find where we are currently
+        // If active_pane_id is invalid (e.g. just closed), default to 0 (first pane)
+        let current_idx = ids.iter().position(|&id| id == self.active_pane_id).unwrap_or(0);
+
+        // 3. Calculate new index with wrapping
+        let new_idx = if is_next {
+            (current_idx + 1) % ids.len() // Wrap: (2+1) % 3 = 0
+        } else {
+            if current_idx == 0 {
+                ids.len() - 1 // Wrap: Previous from 0 goes to last
+            } else {
+                current_idx - 1
+            }
+        };
+
+        // 4. Update the state
+        self.active_pane_id = ids[new_idx];
+        debug!("Switched to Pane ID: {}", self.active_pane_id);
+        let (tx, ty) = if let Some(&pos) = self.pane_cursors.get(&self.active_pane_id) {
+            // Option A: We know exactly where the cursor was last seen
+            pos 
+        } else {
+            // Option B: Fallback (Pane hasn't drawn yet). Move to top-left of the pane.
+            if let Some(rect) = self.layout_sizing_map.get(&self.active_pane_id) {
+                (rect.x + 1, rect.y + 1)
+            } else {
+                warn!("Active pane has no rect in layout map!");
+                return Ok(());
+            }
+        };
+
+        // 3. Send the command directly to the session
+        let move_cursor = format!("\x1b[{};{}H", ty, tx);
+        self.session_handle.window_output(Bytes::from(move_cursor)).await?;
+
         Ok(())
     }
 }
@@ -116,6 +160,7 @@ impl Window {
             layout_sizing_map,
             panes,
             active_pane_id: init_pane_id,
+            max_pane_id: 1,
             next_pane_id: init_pane_id_1 + 1,
             window_state: WindowState::Focused,
             pane_cursors: HashMap::new(),
@@ -137,6 +182,10 @@ impl Window {
                             PaneOutput { id, bytes, cursor } => {
                                 trace!("Window: PaneOutput");
                                 self.handle_pane_output(id, bytes, cursor).await.unwrap();
+                            }
+                            IteratePane { is_next } => {
+                                debug!("Window: IteratePane");
+                                self.handle_iterate_pane(is_next).await.unwrap();
                             }
                             Redraw => {
                                 debug!("Window: Redraw");

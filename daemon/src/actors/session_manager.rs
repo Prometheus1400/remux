@@ -43,6 +43,10 @@ pub enum SessionManagerEvent {
     UserSplitPane {
         client_id: u32,
     },
+    UserIteratePane {
+        client_id: u32,
+        is_next: bool,
+    },
     UserKillPane {
         client_id: u32,
     },
@@ -137,6 +141,10 @@ impl SessionManager {
                             UserSplitPane { client_id } => {
                                 debug!("SessionManager: UserSplitPane");
                                 self.handle_client_split_pane(client_id).await.unwrap();
+                            }
+                            UserIteratePane { client_id, is_next } => {
+                                debug!("SessionManager: UserIteratePane");
+                                self.handle_client_iterate_pane(client_id, is_next).await.unwrap();
                             }
                             UserKillPane { client_id } => {
                                 debug!("SessionManager: UserKillPane");
@@ -247,6 +255,15 @@ impl SessionManager {
         if let Some(session_id) = self.client_to_session_mapping.get(&client_id) {
             let session_handle = self.sessions.get_mut(session_id).unwrap();
             session_handle.user_split_pane().await
+        } else {
+            // TODO: should error
+            Ok(())
+        }
+    }
+    async fn handle_client_iterate_pane(&mut self, client_id: u32, is_next: bool) -> Result<()> {
+        if let Some(session_id) = self.client_to_session_mapping.get(&client_id) {
+            let session_handle = self.sessions.get_mut(session_id).unwrap();
+            session_handle.user_iterate_pane(is_next).await
         } else {
             // TODO: should error
             Ok(())

@@ -127,6 +127,14 @@ impl ClientConnection {
                                                         debug!("Client Event Input: split pane");
                                                         self.session_manager_handle.user_split_pane(self.id).await.unwrap();
                                                     },
+                                                    ParsedEvents::NextPane => {
+                                                        debug!("Client Event Input: next pane");
+                                                        self.session_manager_handle.user_iterate_pane(self.id, true).await.unwrap();
+                                                    },
+                                                    ParsedEvents::PrevPane => {
+                                                        debug!("Client Event Input: prev pane");
+                                                        self.session_manager_handle.user_iterate_pane(self.id, false).await.unwrap();
+                                                    },
                                                     ParsedEvents::RequestSwitchSession => {
                                                         debug!("Client Event Input: request switch session");
                                                         self.session_manager_handle.client_request_switch_session(self.id).await.unwrap();

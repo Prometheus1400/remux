@@ -5,13 +5,17 @@ use crate::prelude::*;
 const CTRL_SPACE: u8 = 0x00;
 const CTRL_B: u8 = 0x02;
 const PERCENT: u8 = 0x25;
-const X: u8 = 0x78;
+const N: u8 = 0x6E;
+const P: u8 = 0x70;
 const S: u8 = 0x73;
+const X: u8 = 0x78;
 
 pub enum ParsedEvents {
     Raw(Bytes),
     KillPane,
+    NextPane,
     SplitPane,
+    PrevPane,
     RequestSwitchSession, // trigger for UI switch session popup
 }
 
@@ -46,12 +50,20 @@ impl InputParser {
                                 events.push(ParsedEvents::SplitPane);
                                 self.buf.drain(..2);
                             }
-                            X => {
-                                events.push(ParsedEvents::KillPane);
+                            N => {
+                                events.push(ParsedEvents::NextPane);
+                                self.buf.drain(..2);
+                            }
+                            P => {
+                                events.push(ParsedEvents::PrevPane);
                                 self.buf.drain(..2);
                             }
                             S => {
                                 events.push(ParsedEvents::RequestSwitchSession);
+                                self.buf.drain(..2);
+                            }
+                            X => {
+                                events.push(ParsedEvents::KillPane);
                                 self.buf.drain(..2);
                             }
                             _ => {

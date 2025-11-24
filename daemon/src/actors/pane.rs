@@ -1,7 +1,5 @@
 use bytes::Bytes;
-use crossterm::terminal;
 use handle_macro::Handle;
-use regex::Regex;
 use tokio::sync::mpsc;
 use tracing::Instrument;
 
@@ -9,7 +7,7 @@ use crate::{
     actors::{
         pty::{Pty, PtyHandle},
         window::WindowHandle,
-    }, control_signals::CLEAR, layout::Rect, prelude::*
+    }, layout::Rect, prelude::*
 };
 
 #[derive(Handle)]
@@ -153,9 +151,8 @@ impl Pane {
 
     async fn handle_rerender(&mut self) -> Result<()> {
         let screen = self.vte.screen();
-        let (rows, cols) = screen.size();
 
-        debug!("RERENDER -- id: {} size {:?}", self.id, screen.size());
+        trace!("RERENDER -- id: {} size {:?}", self.id, screen.size());
         self.prev_screen_state = Some(screen.clone());
         let mut output = Vec::new();
 
@@ -185,12 +182,5 @@ impl Pane {
             Bytes::from(output),
             Some((global_x, global_y))
         ).await
-        // TODO : todo!("don't need to send this when pane is hidden");
-        // match self.state {
-        //     PaneState::Visible => {
-        //     },
-        //     PaneState::Hidden => {
-        //     }
-        // }
     }
 }

@@ -22,6 +22,7 @@ pub enum SessionEvent {
     //    window controls active pane which should be sufficient)
     UserConnection,
     UserSplitPane,
+    UserIteratePane { is_next: bool },
     UserKillPane,
     Redraw,
 
@@ -79,6 +80,10 @@ impl Session {
                                 debug!("Session: UserSplitPane");
                                 todo!()
                             }
+                            UserIteratePane { is_next }=> {
+                                debug!("Session: UserIteratePane");
+                                self.handle_iterate_pane(is_next).await.unwrap();
+                            }
                             UserKillPane => {
                                 debug!("Session: UserKillPane");
                                 todo!()
@@ -117,5 +122,9 @@ impl Session {
 
     async fn handle_new_connection(&self) -> Result<()> {
         self.window_handle.redraw().await
+    }
+
+    async fn handle_iterate_pane(&self, is_next: bool) -> Result<()> {
+        self.window_handle.iterate_pane(is_next).await
     }
 }

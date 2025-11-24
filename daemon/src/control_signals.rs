@@ -2,4 +2,3 @@
 
 #![allow(unused)]
 pub const CLEAR: &[u8] = b"\x1b[2J\x1b[H";
-pub const CURSOR_HOME: &[u8] = b"\x1b[H";
