@@ -190,11 +190,13 @@ impl SessionManager {
             .or_insert(vec![]);
         clients.push(client_id);
         for c in self.clients.values() {
-            c.new_session(session_id).await?; 
+            c.new_session(session_id).await?;
         }
         self.client_to_session_mapping.insert(client_id, session_id);
 
-        client_handle.current_sessions(self.sessions.keys().copied().collect()).await?;
+        client_handle
+            .current_sessions(self.sessions.keys().copied().collect())
+            .await?;
         let session_handle = self
             .sessions
             .get_mut(&session_id)

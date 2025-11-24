@@ -9,7 +9,8 @@ use remux_core::{
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::UnixStream,
-    sync::mpsc, time::interval,
+    sync::mpsc,
+    time::interval,
 };
 use tracing::{Instrument, debug};
 
@@ -18,7 +19,10 @@ use crate::{
         WidgetRunner,
         ui::{UI, UIHandle},
         widget_runner::WidgetRunnerHandle,
-    }, input_parser::{InputParser, LocalAction, ParsedEvent}, prelude::*, state_view::StateView
+    },
+    input_parser::{InputParser, LocalAction, ParsedEvent},
+    prelude::*,
+    state_view::StateView,
 };
 
 #[derive(Handle)]
@@ -51,7 +55,7 @@ pub struct Client {
     widget_runner_handle: WidgetRunnerHandle,
     ui_handle: UIHandle,
     state_view: StateView,
-    input_parser: InputParser, 
+    input_parser: InputParser,
 }
 impl Client {
     #[instrument(skip(stream))]

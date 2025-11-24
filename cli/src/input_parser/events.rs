@@ -6,5 +6,5 @@ pub enum ParsedEvent {
 }
 
 pub enum LocalAction {
-    SwitchSession, 
+    SwitchSession,
 }

@@ -5,9 +5,7 @@ use tokio::{io::AsyncWriteExt, net::UnixStream, sync::mpsc};
 use tracing::Instrument;
 
 use crate::{
-    actors::session_manager::SessionManagerHandle,
-    control_signals::CLEAR,
-    layout::SplitDirection,
+    actors::session_manager::SessionManagerHandle, control_signals::CLEAR, layout::SplitDirection,
     prelude::*,
 };
 

@@ -3,7 +3,6 @@
 pub struct StateView {
     pub session_ids: Vec<u32>,
     pub active_session: Option<u32>,
-
     // window_ids: Vec<u32>,
     // pub active_window: Option<u32>,
 }

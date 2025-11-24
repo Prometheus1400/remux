@@ -1,7 +1,7 @@
 mod actors;
 mod args;
-mod input_parser;
 mod error;
+mod input_parser;
 mod prelude;
 mod state_view;
 mod widgets;

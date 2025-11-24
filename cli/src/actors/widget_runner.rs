@@ -14,7 +14,7 @@ use tracing::Instrument;
 use crate::{
     actors::client::ClientHandle,
     prelude::*,
-    widgets::{SelectorWidget, AlternateScreenWidget},
+    widgets::{AlternateScreenWidget, SelectorWidget},
 };
 
 #[derive(Handle)]
@@ -72,9 +72,7 @@ impl WidgetRunner {
                                     .await
                                 {
                                     let session_id = items[index];
-                                    self.client_handle
-                                        .switch_session(Some(session_id))
-                                        .await?;
+                                    self.client_handle.switch_session(Some(session_id)).await?;
                                 } else {
                                     self.client_handle.switch_session(None).await?;
                                 }

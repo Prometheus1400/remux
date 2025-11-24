@@ -1,6 +1,9 @@
 use remux_core::events::CliEvent;
 
-use crate::{input_parser::events::{LocalAction, ParsedEvent}, prelude::*};
+use crate::{
+    input_parser::events::{LocalAction, ParsedEvent},
+    prelude::*,
+};
 
 const CTRL_SPACE: u8 = 0x00;
 const CTRL_B: u8 = 0x02;
@@ -10,7 +13,6 @@ const N: u8 = 0x6E;
 const P: u8 = 0x70;
 const S: u8 = 0x73;
 const X: u8 = 0x78;
-
 
 #[derive(Debug)]
 pub struct InputParser {
@@ -44,7 +46,8 @@ impl InputParser {
                                 self.buf.drain(..2);
                             }
                             DOUBLE_QUOTE => {
-                                events.push(ParsedEvent::DaemonAction(CliEvent::SplitPaneHorizontal));
+                                events
+                                    .push(ParsedEvent::DaemonAction(CliEvent::SplitPaneHorizontal));
                                 self.buf.drain(..2);
                             }
                             N => {
