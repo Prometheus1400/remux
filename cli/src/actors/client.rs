@@ -21,8 +21,7 @@ use crate::{
         widget_runner::WidgetRunnerHandle,
     },
     input_parser::{Action, InputParser, ParsedEvent},
-    prelude::*,
-    state_view::StateView,
+    prelude::*, states::daemon_state::DaemonState,
 };
 
 #[derive(Handle)]
@@ -54,7 +53,7 @@ pub struct Client {
     stdin_tx: mpsc::Sender<Bytes>,          // this is for popup actor to connect to stdin
     widget_runner_handle: WidgetRunnerHandle,
     ui_handle: UIHandle,
-    state_view: StateView,
+    daemon_state: DaemonState,
     input_parser: InputParser,
 }
 impl Client {
@@ -79,7 +78,7 @@ impl Client {
             stdin_tx,
             widget_runner_handle,
             ui_handle,
-            state_view: StateView::default(),
+            daemon_state: DaemonState::default(),
             input_parser: InputParser::new(),
         })
     }
@@ -90,7 +89,6 @@ impl Client {
             let span = tracing::Span::current();
             let mut stdin = tokio::io::stdin();
             let mut stdin_buf = [0u8; 1024];
-            let mut stdout = tokio::io::stdout();
             async move {
                 let mut ticker = interval(Duration::from_millis(1000));
                 loop {
@@ -129,15 +127,15 @@ impl Client {
                                         }
                                         DaemonEvent::CurrentSessions(session_ids) => {
                                             debug!("DaemonEvent(CurrentSessions({session_ids:?}))");
-                                            self.state_view.set_sessions(session_ids);
+                                            self.daemon_state.set_sessions(session_ids);
                                         }
                                         DaemonEvent::ActiveSession(session_id) => {
                                             debug!("DaemonEvent(ActiveSession({session_id}))");
-                                            self.state_view.set_active_session(session_id);
+                                            self.daemon_state.set_active_session(session_id);
                                         }
                                         DaemonEvent::NewSession(session_id) => {
                                             debug!("DaemonEvent(NewSession({session_id}))");
-                                            self.state_view.add_session(session_id);
+                                            self.daemon_state.add_session(session_id);
                                         }
                                         DaemonEvent::DeletedSession(session_id) => {
                                             todo!("implement delete session");
@@ -166,7 +164,7 @@ impl Client {
                                                             Action::SwitchSession => {
                                                                 self.daemon_events_state = DaemonEventsState::Blocked;
                                                                 self.stdin_state = StdinState::Popup;
-                                                                self.widget_runner_handle.select_session(self.state_view.session_ids.clone()).await?;
+                                                                self.widget_runner_handle.select_session(self.daemon_state.session_ids.clone()).await?;
                                                             },
                                                         }
                                                     },
@@ -191,7 +189,7 @@ impl Client {
                         },
                         _ = ticker.tick() => {
                             // TODO: make this event driven instead of on timer
-                            self.ui_handle.sync_state_view(self.state_view.clone()).await?;
+                            self.ui_handle.sync_daemon_state(self.daemon_state.clone()).await?;
                         }
                     }
                 }

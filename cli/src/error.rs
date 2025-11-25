@@ -3,7 +3,7 @@ use remux_core::messages::RequestMessage;
 use thiserror::Error;
 use tokio::sync::mpsc::error::SendError;
 
-use crate::actors::{client::ClientEvent, ui::UIEvent, widget_runner::WidgetRunnerEvent};
+use crate::actors::{client::ClientEvent, lua::{Lua, LuaEvent}, ui::UIEvent, widget_runner::WidgetRunnerEvent};
 
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -36,8 +36,20 @@ pub enum Error {
         source: remux_core::error::Error,
     },
 
+    #[error("Lua error: {0}")]
+    Lua(String),
+
     #[error("Event Send Error: {0}")]
     EventSend(EventSendError),
+
+    #[error("Sync Send Error: {0}")]
+    SyncSend(#[from] std::sync::mpsc::SendError<LuaEvent>),
+}
+
+impl From<mlua::Error> for Error {
+    fn from(e: mlua::Error) -> Self {
+        Error::Lua(e.to_string())
+    }
 }
 
 #[derive(Error, Debug)]
@@ -50,6 +62,8 @@ pub enum EventSendError {
     Bytes(SendError<Bytes>),
     #[error("WidgetRunner send error: {0}")]
     WidgetRunner(SendError<WidgetRunnerEvent>),
+    // #[error("LuaActor send error: {0}")]
+    // LuaActor(SendError<LuaActorEvent>),
 }
 
 impl From<SendError<ClientEvent>> for Error {
@@ -72,3 +86,8 @@ impl From<SendError<WidgetRunnerEvent>> for Error {
         Self::EventSend(EventSendError::WidgetRunner(e))
     }
 }
+// impl From<SendError<LuaActorEvent>> for Error {
+//     fn from(e: SendError<LuaActorEvent>) -> Self {
+//         Self::EventSend(EventSendError::LuaActor(e))
+//     }
+// }
