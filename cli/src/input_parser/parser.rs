@@ -13,6 +13,7 @@ const N: u8 = 0x6E;
 const P: u8 = 0x70;
 const S: u8 = 0x73;
 const X: u8 = 0x78;
+const D: u8 = 0x64;
 
 #[derive(Debug)]
 pub struct InputParser {
@@ -60,6 +61,10 @@ impl InputParser {
                             }
                             X => {
                                 events.push(DaemonAction(CliEvent::KillPane));
+                                self.buf.drain(..2);
+                            }
+                            D => {
+                                events.push(DaemonAction(CliEvent::Detach));
                                 self.buf.drain(..2);
                             }
                             S => {

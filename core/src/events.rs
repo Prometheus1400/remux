@@ -12,6 +12,8 @@ pub enum CliEvent {
     PrevPane,
 
     SwitchSession { session_id: u32 }, // switch session - does nothing if session does not exist
+
+    Detach
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -26,4 +28,6 @@ pub enum DaemonEvent {
     NewSession(u32),
     DeletedSession(u32),
     // TODO: for window id
+
+    Disconnected
 }

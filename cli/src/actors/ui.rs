@@ -93,6 +93,7 @@ impl UI {
                         }
                     }
                 }
+                debug!("ui stopped");
                 Ok(())
             }
         });
