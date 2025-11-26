@@ -7,7 +7,6 @@ use crate::actors::{
     client::ClientEvent,
     lua::{Lua, LuaEvent},
     ui::UIEvent,
-    widget_runner::WidgetRunnerEvent,
 };
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -65,8 +64,8 @@ pub enum EventSendError {
     UI(SendError<UIEvent>),
     #[error("Bytes send error: {0}")]
     Bytes(SendError<Bytes>),
-    #[error("WidgetRunner send error: {0}")]
-    WidgetRunner(SendError<WidgetRunnerEvent>),
+    // #[error("WidgetRunner send error: {0}")]
+    // WidgetRunner(SendError<WidgetRunnerEvent>),
     // #[error("LuaActor send error: {0}")]
     // LuaActor(SendError<LuaActorEvent>),
 }
@@ -86,11 +85,11 @@ impl From<SendError<Bytes>> for Error {
         Self::EventSend(EventSendError::Bytes(e))
     }
 }
-impl From<SendError<WidgetRunnerEvent>> for Error {
-    fn from(e: SendError<WidgetRunnerEvent>) -> Self {
-        Self::EventSend(EventSendError::WidgetRunner(e))
-    }
-}
+// impl From<SendError<WidgetRunnerEvent>> for Error {
+//     fn from(e: SendError<WidgetRunnerEvent>) -> Self {
+//         Self::EventSend(EventSendError::WidgetRunner(e))
+//     }
+// }
 // impl From<SendError<LuaActorEvent>> for Error {
 //     fn from(e: SendError<LuaActorEvent>) -> Self {
 //         Self::EventSend(EventSendError::LuaActor(e))
