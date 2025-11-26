@@ -1,9 +1,9 @@
 mod actors;
-mod states;
 mod args;
 mod error;
 mod input_parser;
 mod prelude;
+mod states;
 mod widgets;
 
 use std::io::stdout;

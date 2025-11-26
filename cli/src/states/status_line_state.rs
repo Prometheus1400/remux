@@ -1,4 +1,8 @@
-use ratatui::{Frame, layout::{Constraint, Direction, Layout, Rect}, widgets::Paragraph};
+use ratatui::{
+    Frame,
+    layout::{Constraint, Direction, Layout, Rect},
+    widgets::Paragraph,
+};
 
 #[derive(Debug, Clone)]
 pub struct StatusLineState {

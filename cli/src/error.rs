@@ -3,7 +3,12 @@ use remux_core::messages::RequestMessage;
 use thiserror::Error;
 use tokio::sync::mpsc::error::SendError;
 
-use crate::actors::{client::ClientEvent, lua::{Lua, LuaEvent}, ui::UIEvent, widget_runner::WidgetRunnerEvent};
+use crate::actors::{
+    client::ClientEvent,
+    lua::{Lua, LuaEvent},
+    ui::UIEvent,
+    widget_runner::WidgetRunnerEvent,
+};
 
 pub type Result<T> = std::result::Result<T, Error>;
 

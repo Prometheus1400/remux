@@ -13,10 +13,7 @@ use tokio::runtime::Handle;
 use crate::{
     actors::ui::UIHandle,
     prelude::*,
-    states::{
-        daemon_state::DaemonState,
-        status_line_state::StatusLineState,
-    },
+    states::{daemon_state::DaemonState, status_line_state::StatusLineState},
 };
 
 pub enum LuaEvent {
@@ -178,9 +175,8 @@ impl Lua {
                 let status_line_state = actor.resolve_status_line_state().unwrap();
                 let ui_handle_clone = actor.ui_handle.clone();
                 let status_line_state_clone = status_line_state.clone();
-                runtime.block_on(async move {
-                    ui_handle_clone.sync_status_line_state(status_line_state_clone).await
-                })?;
+                runtime
+                    .block_on(async move { ui_handle_clone.sync_status_line_state(status_line_state_clone).await })?;
             }
             Ok(())
         });

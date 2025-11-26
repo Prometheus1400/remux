@@ -21,7 +21,8 @@ use crate::{
         widget_runner::WidgetRunnerHandle,
     },
     input_parser::{Action, InputParser, ParsedEvent},
-    prelude::*, states::daemon_state::DaemonState,
+    prelude::*,
+    states::daemon_state::DaemonState,
 };
 
 #[derive(Handle)]
