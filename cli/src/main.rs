@@ -3,7 +3,7 @@ mod args;
 mod error;
 mod input_parser;
 mod prelude;
-mod state_view;
+mod states;
 mod widgets;
 
 use std::io::stdout;

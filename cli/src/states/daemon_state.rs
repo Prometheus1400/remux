@@ -1,13 +1,13 @@
 // clients view of the state
 #[derive(Debug, Clone)]
-pub struct StateView {
+pub struct DaemonState {
     pub session_ids: Vec<u32>,
     pub active_session: Option<u32>,
     // window_ids: Vec<u32>,
     // pub active_window: Option<u32>,
 }
 
-impl Default for StateView {
+impl Default for DaemonState {
     fn default() -> Self {
         Self {
             session_ids: vec![],
@@ -18,7 +18,7 @@ impl Default for StateView {
     }
 }
 
-impl StateView {
+impl DaemonState {
     pub fn set_sessions(&mut self, session_ids: Vec<u32>) {
         self.session_ids = session_ids;
     }
