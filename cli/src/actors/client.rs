@@ -116,6 +116,11 @@ impl Client {
                                             trace!("DaemonEvent(Raw({bytes:?}))");
                                             self.ui_handle.output(Bytes::from(bytes)).await?;
                                         }
+                                        DaemonEvent::Disconnected => {
+                                            debug!("DaemonEvent(Disconnected)");
+                                            self.ui_handle.kill().await.unwrap();
+                                            break;
+                                        }
                                         DaemonEvent::SwitchSessionOptions{session_ids} => {
                                             debug!("DaemonEvent(SwitchSessionOptions({session_ids:?}))");
                                             self.daemon_events_state = DaemonEventsState::Blocked;

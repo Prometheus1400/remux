@@ -18,6 +18,7 @@ pub enum ClientConnectionEvent {
     SessionOutput { bytes: Bytes },
     NewSession(u32),
     CurrentSessions(Vec<u32>),
+    Disconnect,
 }
 use ClientConnectionEvent::*;
 
@@ -89,7 +90,9 @@ impl ClientConnection {
                                     debug!("Client: DetachFromSession");
                                     self.state = ClientConnectionState::Unattached;
                                     self.stream.write_all(CLEAR).await.unwrap();
-                                    // break;
+                                }
+                                Disconnect => {
+                                    communication::send_event(&mut self.stream, DaemonEvent::Disconnected).await.unwrap();
                                 }
                                 SessionOutput{bytes} => {
                                     trace!("Client: SessionOutput");
@@ -112,6 +115,10 @@ impl ClientConnection {
                                         CliEvent::Raw(bytes) => {
                                             trace!("Client Event Input: raw({bytes:?})");
                                             self.session_manager_handle.user_input(self.id, Bytes::from(bytes)).await.unwrap();
+                                        },
+                                        CliEvent::Detach => {
+                                            trace!("Client Event Input: detach");
+                                            self.session_manager_handle.client_disconnect(self.id).await.unwrap();
                                         },
                                         CliEvent::KillPane => {
                                             debug!("Client Event Input: kill pane");
