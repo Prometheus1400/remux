@@ -176,7 +176,6 @@ impl Lua {
 
                 actor.lua.load(&code).exec().unwrap();
                 let status_line_state = actor.resolve_status_line_state().unwrap();
-                info!("status line state: {:?}", status_line_state);
                 let ui_handle_clone = actor.ui_handle.clone();
                 let status_line_state_clone = status_line_state.clone();
                 runtime.block_on(async move {
