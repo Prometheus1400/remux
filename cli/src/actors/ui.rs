@@ -27,7 +27,7 @@ use crate::{
     prelude::*,
     states::{daemon_state::DaemonState, status_line_state::StatusLineState},
     utils::DisplayableVec,
-    widgets::Selector,
+    widgets::{BasicSelector, FuzzySelector, Selector},
 };
 
 #[derive(Handle)]
@@ -36,14 +36,16 @@ pub enum UIEvent {
     Kill,
     SyncDaemonState(DaemonState),
     SyncStatusLineState(StatusLineState),
-    Select { items: DisplayableVec, title: String },
+    SelectBasic { items: DisplayableVec, title: String },
+    SelectFuzzy { items: DisplayableVec, title: String },
 }
 use UIEvent::*;
 
 #[derive(Debug, PartialEq)]
 enum UIState {
     Normal,
-    Selecting,
+    SelectingBasic,
+    SelectingFuzzy,
 }
 
 pub struct UI {
@@ -57,7 +59,8 @@ pub struct UI {
     lua_handle: LuaHandle,
     client_handle: ClientHandle,
     ui_state: UIState,
-    selector: Arc<RwLock<Selector>>,
+    basic_selector: Arc<RwLock<BasicSelector>>,
+    fuzzy_selector: Arc<RwLock<FuzzySelector>>,
     selector_rx: mpsc::Receiver<Option<usize>>,
     stdin_rx: mpsc::Receiver<Bytes>,
 }
@@ -83,7 +86,8 @@ impl UI {
             lua_handle,
             client_handle,
             ui_state: UIState::Normal,
-            selector: Selector::new(selector_tx),
+            basic_selector: BasicSelector::new(selector_tx.clone()),
+            fuzzy_selector: FuzzySelector::new(selector_tx.clone()),
             selector_rx,
             stdin_rx,
         })
@@ -115,9 +119,13 @@ impl UI {
                                 SyncStatusLineState(status_line_state) => {
                                     self.status_line_state = status_line_state;
                                 }
-                                Select{items, title} => {
-                                    self.ui_state = UIState::Selecting;
-                                    Selector::run(&self.selector, selector_tx.subscribe(), items, title).unwrap();
+                                SelectBasic{items, title} => {
+                                    self.ui_state = UIState::SelectingBasic;
+                                    BasicSelector::run(&self.basic_selector, selector_tx.subscribe(), items, title).unwrap();
+                                }
+                                SelectFuzzy{items, title} => {
+                                    self.ui_state = UIState::SelectingFuzzy;
+                                    FuzzySelector::run(&self.fuzzy_selector, selector_tx.subscribe(), items, title).unwrap();
                                 }
                                 Kill => {
                                     self.lua_handle.kill().unwrap();
@@ -125,7 +133,7 @@ impl UI {
                                 }
                             }
                         }
-                        Some(bytes) = self.stdin_rx.recv(), if matches!(self.ui_state, UIState::Selecting) => {
+                        Some(bytes) = self.stdin_rx.recv(), if matches!(self.ui_state, UIState::SelectingFuzzy | UIState::SelectingBasic) => {
                             selector_tx.send(bytes).unwrap();
                         }
                         Some(index) = self.selector_rx.recv() => {
@@ -136,11 +144,15 @@ impl UI {
                         _ = ticker.tick() => {
                             let screen = self.parser.screen();
                             term.draw(|f| {
-                                let chunks = ratatui::layout::Layout::default()
-                                    .direction(ratatui::layout::Direction::Vertical)
+                                use ratatui::{
+                                    layout::Constraint, layout::Direction, layout::Layout,
+                                };
+
+                                let chunks = Layout::default()
+                                    .direction(Direction::Vertical)
                                     .constraints([
-                                        ratatui::layout::Constraint::Min(1),      // pseudo terminal takes everything else
-                                        ratatui::layout::Constraint::Length(1),   // bottom status bar
+                                        Constraint::Min(1),      // pseudo terminal takes everything else
+                                        Constraint::Length(1),   // bottom status bar
                                     ])
                                     .split(f.area());
 
@@ -152,8 +164,11 @@ impl UI {
                                 self.status_line_state.render(f, chunks[1]);
 
                                 // render selector if active
-                                if self.ui_state == UIState::Selecting {
-                                    Selector::render(&self.selector, f);
+                                if self.ui_state == UIState::SelectingBasic {
+                                    BasicSelector::render(&self.basic_selector, f);
+                                }
+                                if self.ui_state == UIState::SelectingFuzzy {
+                                    FuzzySelector::render(&self.fuzzy_selector, f);
                                 }
 
                             }).unwrap();

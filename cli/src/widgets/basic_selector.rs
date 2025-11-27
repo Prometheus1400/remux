@@ -1,37 +1,33 @@
 use std::sync::{Arc, RwLock};
 
 use bytes::Bytes;
-use ratatui::{
-    Frame,
-    layout::Rect,
-    prelude::*,
-    style::{Modifier, Style},
-    widgets::{Block, Borders, List, ListState},
-};
+use ratatui::{Frame, widgets::ListState};
 use terminput::Event;
 use tokio::sync::{broadcast, mpsc};
 
-use crate::{prelude::*, utils::DisplayableVec};
+use crate::{prelude::*, utils::DisplayableVec, widgets::traits::Selector};
 
-pub struct Selector {
+#[derive(Debug, Clone)]
+pub struct BasicSelector {
     pub select_state: ListState,
-    pub title: String,
+    pub title: Option<String>,
     pub items: Vec<String>,
     pub tx: mpsc::Sender<Option<usize>>,
     pub is_running: bool,
 }
-impl Selector {
+impl BasicSelector {
     pub fn new(tx: mpsc::Sender<Option<usize>>) -> Arc<RwLock<Self>> {
         Arc::new(RwLock::new(Self {
             select_state: ListState::default().with_selected(Some(0)),
-            title: "".to_owned(),
+            title: None,
             items: Vec::new(),
             tx,
             is_running: false,
         }))
     }
-
-    pub fn run<T: Into<String>>(
+}
+impl Selector for BasicSelector {
+    fn run<T: Into<String>>(
         selector: &Arc<RwLock<Self>>,
         mut rx: broadcast::Receiver<Bytes>,
         items: DisplayableVec,
@@ -43,7 +39,7 @@ impl Selector {
                 return Err(Error::Custom("duplicate task".to_owned()));
             }
             guard.items = items.to_strings();
-            guard.title = title.into();
+            guard.title = Some(title.into());
         }
         tokio::spawn({
             let selector = Arc::clone(selector);
@@ -52,8 +48,10 @@ impl Selector {
             }
             async move {
                 loop {
+                    debug!("Kaleb");
                     let key_event = {
                         if let Ok(bytes) = rx.recv().await {
+                            debug!("bytes gotten in basic selector");
                             match Event::parse_from(&bytes) {
                                 Ok(None) => {
                                     warn!("Couldn't fully parse bytes to terminal event");
@@ -73,6 +71,7 @@ impl Selector {
                     let tx = { selector.read().unwrap().tx.clone() };
                     let selection = {
                         if let Some(key_event) = key_event {
+                            debug!("key pressed");
                             use terminput::KeyCode::*;
                             let mut guard = selector.write().unwrap();
                             match key_event.code {
@@ -121,7 +120,13 @@ impl Selector {
         Ok(())
     }
 
-    pub fn render(selector: &Arc<RwLock<Self>>, f: &mut Frame) {
+    fn render(selector: &Arc<RwLock<Self>>, f: &mut Frame) {
+        use ratatui::{
+            layout::Rect,
+            prelude::*,
+            style::{Modifier, Style},
+            widgets::{Block, Borders, List},
+        };
         let mut guard = selector.write().unwrap();
         let size = f.area();
 
@@ -136,7 +141,7 @@ impl Selector {
                 Block::default()
                     .borders(Borders::ALL)
                     .border_style(Style::default().bold())
-                    .title(guard.title.clone())
+                    .title(guard.title.as_ref().unwrap().clone())
                     .title_alignment(ratatui::layout::Alignment::Center),
             )
             .highlight_symbol(">> ")
