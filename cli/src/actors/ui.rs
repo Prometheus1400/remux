@@ -33,7 +33,6 @@ use crate::{
 #[derive(Handle)]
 pub enum UIEvent {
     Output(Bytes),
-    ClearTerminal,
     Kill,
     SyncDaemonState(DaemonState),
     SyncStatusLineState(StatusLineState),
@@ -108,9 +107,6 @@ impl UI {
                             match event {
                                 Output(bytes) => {
                                     self.parser.process(&bytes);
-                                }
-                                ClearTerminal => {
-                                    self.parser.process(b"\x1b[H\x1b[2J");
                                 }
                                 SyncDaemonState(daemon_state) => {
                                     self.lua_handle.sync_daemon_state(daemon_state.clone()).unwrap();
