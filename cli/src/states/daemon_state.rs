@@ -1,21 +1,10 @@
 // clients view of the state
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct DaemonState {
     pub session_ids: Vec<u32>,
     pub active_session: Option<u32>,
     // window_ids: Vec<u32>,
     // pub active_window: Option<u32>,
-}
-
-impl Default for DaemonState {
-    fn default() -> Self {
-        Self {
-            session_ids: vec![],
-            active_session: None,
-            // window_ids: vec![],
-            // active_window: None,
-        }
-    }
 }
 
 impl DaemonState {
@@ -26,9 +15,9 @@ impl DaemonState {
         let i = self.session_ids.binary_search(&session_id).unwrap_or_else(|i| i);
         self.session_ids.insert(i, session_id);
     }
-    pub fn remove_session(&mut self, session_id: u32) {
-        self.session_ids.retain(|s| s != &session_id);
-    }
+    // pub fn remove_session(&mut self, session_id: u32) {
+    //     self.session_ids.retain(|s| s != &session_id);
+    // }
     pub fn set_active_session(&mut self, session_id: u32) {
         self.active_session = Some(session_id);
     }
