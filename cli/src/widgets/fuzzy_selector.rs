@@ -1,9 +1,18 @@
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use bytes::Bytes;
-use fuzzy_matcher::{FuzzyMatcher, skim::SkimMatcherV2};
-use ratatui::{Frame, widgets::ListState};
-use terminput::Event;
+use fuzzy_matcher::{
+    FuzzyMatcher,
+    skim::{SkimMatcherV2, SkimScoreConfig},
+};
+use ratatui::{
+    Frame,
+    layout::Rect,
+    prelude::*,
+    style::{Modifier, Style},
+    widgets::{Block, Borders, List, ListState, Paragraph},
+};
+use terminput::{Event, KeyCode};
 use tokio::sync::{broadcast, mpsc};
 
 use crate::{prelude::*, utils::DisplayableVec, widgets::traits::Selector};
@@ -19,7 +28,6 @@ impl IndexedItem {
     }
 }
 
-#[derive(Debug, Clone)]
 pub struct FuzzySelector {
     pub select_state: ListState,
     pub title: Option<String>,
@@ -42,6 +50,23 @@ impl FuzzySelector {
             query: "".to_owned(),
         }))
     }
+
+    /// Helper to perform fuzzy filtering and update state
+    fn filter_items(guard: &mut RwLockWriteGuard<'_, Self>, matcher: &SkimMatcherV2) {
+        let mut filtered_items = guard
+            .items
+            .iter()
+            .filter_map(|x| {
+                matcher
+                    .fuzzy_match(&x.item, &guard.query)
+                    .map(|score| (score, x.clone()))
+            })
+            .collect::<Vec<(i64, IndexedItem)>>();
+
+        filtered_items.sort_by(|a, b| b.0.cmp(&a.0));
+        filtered_items.reverse();
+        guard.filtered_items = filtered_items.into_iter().map(|x| x.1).collect();
+    }
 }
 
 impl Selector for FuzzySelector {
@@ -51,6 +76,7 @@ impl Selector for FuzzySelector {
         items: DisplayableVec,
         title: T,
     ) -> Result<()> {
+        // --- Setup Phase ---
         {
             let mut guard = selector.write().unwrap();
             if guard.is_running {
@@ -62,128 +88,124 @@ impl Selector for FuzzySelector {
                 .enumerate()
                 .map(|pair| IndexedItem::new(pair.0, pair.1))
                 .collect();
-            guard.filtered_items = guard.items.clone();
-            guard.title = Some(title.into());
-        }
-        tokio::spawn({
-            let selector = Arc::clone(selector);
-            let matcher = SkimMatcherV2::default();
-            {
-                selector.write().unwrap().is_running = true;
-            }
-            async move {
-                loop {
-                    let selection = {
-                        if let Ok(bytes) = rx.recv().await {
-                            debug!("bytes gotten in fuzzy selector");
-                            use terminput::KeyCode::*;
-                            match Event::parse_from(&bytes) {
-                                Ok(None) => {
-                                    warn!("Couldn't fully parse bytes to terminal event");
-                                    None
-                                }
-                                Err(e) => {
-                                    error!("Couldn't parse bytes to terminal event: {e}");
-                                    None
-                                }
-                                Ok(Some(Event::Key(key_code))) => {
-                                    let mut guard = selector.write().unwrap();
-                                    match key_code.code {
-                                        Enter => {
-                                            debug!("enter pressed");
-                                            Some(ListState::default().with_selected(Some(0)).selected())
-                                            // Some(guard.select_state.selected())
-                                        }
-                                        Esc => {
-                                            debug!("esc pressed");
-                                            Some(None)
-                                        }
-                                        Up => {
-                                            todo!()
-                                            // let i = match guard.select_state.selected() {
-                                            //     Some(i) if i > 0 => i - 1,
-                                            //     _ => 0,
-                                            // };
-                                            // guard.select_state.select(Some(i));
-                                            // None
-                                        }
-                                        Down => {
-                                            todo!()
-                                            // let i = match guard.select_state.selected() {
-                                            //     Some(i) if i < guard.items.len() - 1 => i + 1,
-                                            //     _ => guard.items.len() - 1,
-                                            // };
-                                            // guard.select_state.select(Some(i));
-                                            // None
-                                        }
-                                        Backspace => {
-                                            guard.query.pop();
-                                            let mut filtered_items = guard
-                                                .items
-                                                .iter()
-                                                .filter_map(|x| {
-                                                    matcher
-                                                        .fuzzy_match(&x.item, &guard.query)
-                                                        .map(|score| (score, x.clone()))
-                                                })
-                                                .collect::<Vec<(i64, IndexedItem)>>();
-                                            filtered_items.sort_by(|a, b| b.0.cmp(&a.0));
-                                            guard.filtered_items = filtered_items.into_iter().map(|x| x.1).collect();
-                                            None
-                                        }
-                                        Char(c) => {
-                                            guard.query.push(c);
-                                            let mut filtered_items = guard
-                                                .items
-                                                .iter()
-                                                .filter_map(|x| {
-                                                    matcher
-                                                        .fuzzy_match(&x.item, &guard.query)
-                                                        .map(|score| (score, x.clone()))
-                                                })
-                                                .collect::<Vec<(i64, IndexedItem)>>();
-                                            filtered_items.sort_by(|a, b| b.0.cmp(&a.0));
-                                            guard.filtered_items = filtered_items.into_iter().map(|x| x.1).collect();
-                                            None
-                                        }
-                                        _ => None,
-                                    }
-                                }
-                                _ => None,
-                            }
-                        } else {
-                            None
-                        }
-                    };
 
-                    let tx = { selector.read().unwrap().tx.clone() };
-                    if let Some(selection) = selection {
-                        tx.send(selection).await.unwrap();
+            // Initial filter/setup
+            guard.filtered_items = guard.items.clone();
+            let opt = guard.filtered_items.last().map(|_| 0);
+            guard.select_state.select(opt); // Select first item if exists
+
+            guard.title = Some(title.into());
+            guard.is_running = true;
+            guard.query = String::new();
+        } // Lock dropped
+
+        // --- Spawn Asynchronous Task ---
+        let selector_clone = Arc::clone(selector);
+        tokio::spawn(async move {
+            let matcher = SkimMatcherV2::default();
+
+            loop {
+                let final_selection: Option<Option<usize>> = {
+                    if let Ok(bytes) = rx.recv().await {
+                        // Task yields here, no lock held
+
+                        match Event::parse_from(&bytes) {
+                            Ok(Some(Event::Key(key_code))) => {
+                                // Acquire lock to mutate state
+                                let mut guard = selector_clone.write().unwrap();
+                                let mut result: Option<Option<usize>> = None;
+
+                                match key_code.code {
+                                    KeyCode::Enter => {
+                                        debug!("enter pressed");
+                                        let selected_index = guard.select_state.selected();
+                                        // Map the current filtered index to the original index
+                                        let original_index = selected_index
+                                            .and_then(|i| guard.filtered_items.get(i))
+                                            .map(|item| item.index);
+
+                                        result = Some(original_index); // Signal completion
+                                    }
+                                    KeyCode::Esc => {
+                                        debug!("esc pressed");
+                                        result = Some(None); // Signal cancellation
+                                    }
+                                    KeyCode::Up => {
+                                        let current_index = guard.select_state.selected().unwrap_or(0);
+                                        let i = current_index.saturating_sub(1);
+                                        guard.select_state.select(Some(i));
+                                    }
+                                    KeyCode::Down => {
+                                        let max_index = guard.filtered_items.len().saturating_sub(1);
+                                        let current_index = guard.select_state.selected().unwrap_or(0);
+                                        let i = (current_index + 1).min(max_index);
+                                        guard.select_state.select(Some(i));
+                                    }
+                                    KeyCode::Backspace => {
+                                        guard.query.pop();
+                                        Self::filter_items(&mut guard, &matcher);
+                                        let opt = guard.filtered_items.last().map(|_| 0);
+                                        guard.select_state.select(opt);
+                                    }
+                                    KeyCode::Char(c) => {
+                                        guard.query.push(c);
+                                        Self::filter_items(&mut guard, &matcher);
+                                        let opt = guard.filtered_items.last().map(|_| 0);
+                                        guard.select_state.select(opt);
+                                    }
+                                    _ => {}
+                                }
+
+                                // CRITICAL: Explicitly drop the guard before any subsequent await
+                                drop(guard);
+
+                                result
+                            }
+                            Ok(None) => {
+                                warn!("Couldn't fully parse bytes to terminal event");
+                                None
+                            }
+                            Err(e) => {
+                                error!("Couldn_t parse bytes to terminal event: {e}");
+                                None
+                            }
+                            _ => None,
+                        }
+                    } else {
+                        // rx channel closed
                         break;
                     }
+                };
+
+                // If a final selection was determined (Enter/Esc), send the result and break.
+                if let Some(selection) = final_selection {
+                    // Acquire a read lock just to get a clone of the Sender (tx)
+                    let tx_clone = selector_clone.read().unwrap().tx.clone();
+                    // Lock is dropped immediately after clone
+
+                    tx_clone.send(selection).await.unwrap();
+                    break;
                 }
-                {
-                    selector.write().unwrap().is_running = false;
-                }
-                Ok::<(), Error>(())
+            } // end loop
+
+            // --- Cleanup Phase ---
+            {
+                // Re-acquire lock to set state to finished
+                selector_clone.write().unwrap().is_running = false;
             }
+            Ok::<(), Error>(())
         });
         Ok(())
     }
 
     fn render(selector: &Arc<RwLock<Self>>, f: &mut Frame) {
-        use ratatui::{
-            layout::Rect,
-            prelude::*,
-            style::{Modifier, Style},
-            widgets::{Block, Borders, List, Paragraph},
-        };
-        let mut guard = selector.write().unwrap();
+        // Use read lock for synchronous, non-mutating rendering
+        let guard = selector.read().unwrap();
         let size = f.area();
 
-        // Calculate popup size (width and height)
-        let width = (size.width / 2).min(50); // max width 50
-        let height = (guard.filtered_items.len() as u16 + 8).min(size.height / 2); // +2 for padding/border
+        // Calculate popup size
+        let width = (size.width / 2).min(50);
+        let height = (guard.filtered_items.len() as u16 + 8).min(size.height / 2);
         let x = (size.width.saturating_sub(width)) / 2;
         let y = (size.height.saturating_sub(height)) / 2;
         let rect = Rect::new(x, y, width, height);
@@ -204,7 +226,7 @@ impl Selector for FuzzySelector {
             Block::default()
                 .borders(Borders::ALL)
                 .border_style(Style::default().bold())
-                .title(guard.title.as_ref().unwrap().clone())
+                .title(guard.title.as_ref().unwrap_or(&String::from("Select Item")).clone())
                 .title_alignment(ratatui::layout::Alignment::Center),
         )
         .highlight_symbol(">> ")
@@ -214,7 +236,9 @@ impl Selector for FuzzySelector {
                 .add_modifier(Modifier::BOLD),
         );
 
-        f.render_stateful_widget(list, chunks[0], &mut guard.select_state);
+        // Temporarily mutable state for rendering list
+        let mut list_state = guard.select_state.clone();
+        f.render_stateful_widget(list, chunks[0], &mut list_state);
 
         let paragraph = Paragraph::new(guard.query.clone()).block(
             Block::default()
