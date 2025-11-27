@@ -37,7 +37,7 @@ impl LuaHandle {
 
 #[derive(Debug)]
 pub struct Lua {
-    pub handle: LuaHandle,
+    pub _handle: LuaHandle,
     pub rx: mpsc::Receiver<LuaEvent>,
     pub lua: MLua,
     pub ui_handle: UIHandle,
@@ -47,7 +47,7 @@ pub struct Lua {
 impl Lua {
     fn new(ui_handle: UIHandle, handle: LuaHandle, rx: mpsc::Receiver<LuaEvent>) -> Self {
         Self {
-            handle,
+            _handle: handle,
             rx,
             lua: MLua::new(),
             ui_handle,

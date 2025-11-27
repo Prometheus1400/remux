@@ -146,9 +146,9 @@ impl ClientConnection {
                                         }
                                     }
                                 }
-                                Err(_) => {
+                                Err(e) => {
                                     // client disconnected
-                                    debug!("Client disconnected");
+                                    debug!("Client disconnected because of error recieving cli event: {e}");
                                     self.session_manager_handle.client_disconnect(self.id).await.unwrap();
                                     break;
                                 }

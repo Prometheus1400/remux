@@ -23,7 +23,8 @@ impl DaemonState {
         self.session_ids = session_ids;
     }
     pub fn add_session(&mut self, session_id: u32) {
-        self.session_ids.push(session_id);
+        let i = self.session_ids.binary_search(&session_id).unwrap_or_else(|i| i);
+        self.session_ids.insert(i, session_id);
     }
     pub fn remove_session(&mut self, session_id: u32) {
         self.session_ids.retain(|s| s != &session_id);

@@ -1,41 +1,52 @@
-use std::{io::stdout, time::Duration};
+use std::{
+    io::stdout,
+    sync::{Arc, RwLock},
+    time::Duration,
+};
 
 use bytes::Bytes;
-use handle_macro::Handle;
-use ratatui::{
-    Terminal,
-    prelude::CrosstermBackend,
-    widgets::{Block, Paragraph},
+use crossterm::{
+    execute,
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen},
 };
-use tokio::{sync::mpsc, time::interval};
+use handle_macro::Handle;
+use ratatui::{Terminal, prelude::CrosstermBackend};
+use tokio::{
+    sync::{broadcast, mpsc},
+    time::interval,
+};
+use tracing::Instrument;
 use tui_term::widget::PseudoTerminal;
 use vt100::Parser;
 
 use crate::{
-    actors::lua::{Lua, LuaHandle},
+    actors::{
+        client::ClientHandle,
+        lua::{Lua, LuaHandle},
+    },
     prelude::*,
     states::{daemon_state::DaemonState, status_line_state::StatusLineState},
+    utils::DisplayableVec,
+    widgets::Selector,
 };
 
 #[derive(Handle)]
 pub enum UIEvent {
     Output(Bytes),
-    ClearTerminal,
     Kill,
     SyncDaemonState(DaemonState),
     SyncStatusLineState(StatusLineState),
+    Select { items: DisplayableVec, title: String },
 }
 use UIEvent::*;
 
-pub struct Popup<'a> {
-    paragraph: Paragraph<'a>,
-    x: u16,
-    y: u16,
-    width: u16,
-    height: u16,
+#[derive(Debug, PartialEq)]
+enum UIState {
+    Normal,
+    Selecting,
 }
 
-pub struct UI<'a> {
+pub struct UI {
     // for communication
     handle: UIHandle,
     rx: mpsc::Receiver<UIEvent>,
@@ -43,47 +54,59 @@ pub struct UI<'a> {
     daemon_state: DaemonState,
     status_line_state: StatusLineState,
     parser: Parser,
-    popups: Vec<Paragraph<'a>>,
     lua_handle: LuaHandle,
+    client_handle: ClientHandle,
+    ui_state: UIState,
+    selector: Arc<RwLock<Selector>>,
+    selector_rx: mpsc::Receiver<Option<usize>>,
+    stdin_rx: mpsc::Receiver<Bytes>,
 }
 
-impl<'a> UI<'a> {
-    pub fn spawn() -> Result<UIHandle> {
-        Self::new()?.run()
+impl UI {
+    #[instrument(skip(client_handle, stdin_rx))]
+    pub fn spawn(client_handle: ClientHandle, stdin_rx: mpsc::Receiver<Bytes>) -> Result<UIHandle> {
+        Self::new(client_handle, stdin_rx)?.run()
     }
-    fn new() -> Result<Self> {
+    #[instrument(skip(client_handle, stdin_rx))]
+    fn new(client_handle: ClientHandle, stdin_rx: mpsc::Receiver<Bytes>) -> Result<Self> {
         let (tx, rx) = mpsc::channel(100);
         let handle = UIHandle { tx };
         let parser = vt100::Parser::default();
         let lua_handle = Lua::spawn(handle.clone())?;
+        let (selector_tx, selector_rx) = mpsc::channel(100);
         Ok(Self {
             daemon_state: DaemonState::default(),
             status_line_state: StatusLineState::default(),
             rx,
             handle,
             parser,
-            popups: vec![],
             lua_handle,
+            client_handle,
+            ui_state: UIState::Normal,
+            selector: Selector::new(selector_tx),
+            selector_rx,
+            stdin_rx,
         })
     }
+    #[instrument(skip(self), fields(ui_state = ?self.ui_state))]
     pub fn run(mut self) -> Result<UIHandle> {
+        let span = tracing::Span::current();
+
         let handle_clone = self.handle.clone();
-
         let mut term = Terminal::new(CrosstermBackend::new(stdout())).unwrap();
-        term.clear()?;
-
+        let (selector_tx, _) = broadcast::channel(10000);
         let _: CliTask = tokio::spawn({
+            let selector_tx = selector_tx.clone();
             async move {
                 let mut ticker = interval(Duration::from_millis(16));
+                execute!(stdout(), EnterAlternateScreen)?;
+                term.clear()?;
                 loop {
                     tokio::select! {
                         Some(event) = self.rx.recv() => {
                             match event {
                                 Output(bytes) => {
                                     self.parser.process(&bytes);
-                                }
-                                ClearTerminal => {
-                                    self.parser.process(b"\x1b[H\x1b[2J");
                                 }
                                 SyncDaemonState(daemon_state) => {
                                     self.lua_handle.sync_daemon_state(daemon_state.clone()).unwrap();
@@ -92,17 +115,27 @@ impl<'a> UI<'a> {
                                 SyncStatusLineState(status_line_state) => {
                                     self.status_line_state = status_line_state;
                                 }
+                                Select{items, title} => {
+                                    self.ui_state = UIState::Selecting;
+                                    Selector::run(&self.selector, selector_tx.subscribe(), items, title).unwrap();
+                                }
                                 Kill => {
                                     self.lua_handle.kill().unwrap();
                                     break;
                                 }
                             }
                         }
+                        Some(bytes) = self.stdin_rx.recv(), if matches!(self.ui_state, UIState::Selecting) => {
+                            selector_tx.send(bytes).unwrap();
+                        }
+                        Some(index) = self.selector_rx.recv() => {
+                            debug!("selected index({index:?})");
+                            self.client_handle.selected(index).await.unwrap();
+                            self.ui_state = UIState::Normal;
+                        }
                         _ = ticker.tick() => {
                             let screen = self.parser.screen();
                             term.draw(|f| {
-
-                                // 1. Create the blocks
                                 let chunks = ratatui::layout::Layout::default()
                                     .direction(ratatui::layout::Direction::Vertical)
                                     .constraints([
@@ -111,25 +144,27 @@ impl<'a> UI<'a> {
                                     ])
                                     .split(f.area());
 
-                                // 2. Render pseudo terminal in the upper chunk
+                                // render the normal terminal output
                                 let term_ui = PseudoTerminal::new(screen);
                                 f.render_widget(term_ui, chunks[0]);
 
-                                // 3. Render a simple 1-line status bar
+                                // render the status bar
                                 self.status_line_state.render(f, chunks[1]);
-                                // if let Some(active_session_id) = self.daemon_state.active_session {
-                                //     // let bar = Paragraph::new(format!("current session: {}, all sessions: {:?}", active_session_id, self.daemon_state.session_ids))
-                                //     let bar = Paragraph::from(&self.status_line_state)
-                                //         .style(ratatui::style::Style::default().bg(ratatui::style::Color::Black));
-                                //         f.render_widget(bar, chunks[1]);
-                                // }
-                            })?;
+
+                                // render selector if active
+                                if self.ui_state == UIState::Selecting {
+                                    Selector::render(&self.selector, f);
+                                }
+
+                            }).unwrap();
                         }
                     }
                 }
                 debug!("ui stopped");
+                execute!(stdout(), LeaveAlternateScreen)?;
                 Ok(())
             }
+            .instrument(span)
         });
 
         Ok(handle_clone)

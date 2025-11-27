@@ -63,13 +63,6 @@ async fn handle_communication(session_manager_handle: SessionManagerHandle, mut 
         }
         RequestBody::SessionsList => {
             todo!()
-            // info!("handling sesions list");
-            // let sessions = SHARED_SESSION_TABLE.lock().await.get_sessions();
-            // messages::write_message(
-            //     &mut stream,
-            //     &ResponseMessage::new(req.get_id(), ResponseBody::SessionsList { sessions }),
-            // )
-            // .await?;
         }
     };
     Ok(())
