@@ -1,8 +1,4 @@
-use std::{
-    cell::RefCell,
-    rc::Rc,
-    sync::{Arc, Mutex, RwLock},
-};
+use std::sync::{Arc, RwLock};
 
 use bytes::Bytes;
 use ratatui::{
@@ -13,28 +9,25 @@ use ratatui::{
     widgets::{Block, Borders, List, ListState},
 };
 use terminput::Event;
-use tokio::{
-    sync::{broadcast, mpsc, oneshot},
-    task::LocalSet,
-};
+use tokio::sync::{broadcast, mpsc};
 
 use crate::prelude::*;
 
 pub struct Selector {
-    pub task: Option<CliTask>,
     pub select_state: ListState,
     pub title: String,
     pub items: Vec<String>,
     pub tx: mpsc::Sender<Option<usize>>,
+    pub is_running: bool,
 }
 impl Selector {
     pub fn new(tx: mpsc::Sender<Option<usize>>) -> Arc<RwLock<Self>> {
         Arc::new(RwLock::new(Self {
-            task: None,
             select_state: ListState::default().with_selected(Some(0)),
             title: "".to_owned(),
             items: Vec::new(),
             tx,
+            is_running: false,
         }))
     }
 
@@ -44,85 +37,87 @@ impl Selector {
         items: Vec<Box<dyn ToString + Send + Sync>>,
         title: T,
     ) -> Result<()> {
-        let (start_tx, start_rx) = oneshot::channel();
         {
             let mut guard = selector.write().unwrap();
-            if guard.task.is_some() {
+            if guard.is_running {
                 return Err(Error::Custom("duplicate task".to_owned()));
             }
             guard.items = items.into_iter().map(|x| x.to_string()).collect();
             guard.title = title.into();
-            guard.task = Some(tokio::spawn({
-                let selector = Arc::clone(selector);
-                async move {
-                    loop {
-                        let key_event = {
-                            if let Ok(bytes) = rx.recv().await {
-                                match Event::parse_from(&bytes) {
-                                    Ok(None) => {
-                                        warn!("Couldn't fully parse bytes to terminal event");
-                                        None
-                                    }
-                                    Err(e) => {
-                                        error!("Couldn't parse bytes to terminal event: {e}");
-                                        None
-                                    }
-                                    Ok(Some(Event::Key(key_event))) => Some(key_event),
-                                    _ => None,
-                                }
-                            } else {
-                                None
-                            }
-                        };
-
-                        let tx = { selector.read().unwrap().tx.clone() };
-
-                        let selection = {
-                            if let Some(key_event) = key_event {
-                                use terminput::KeyCode::*;
-                                let mut guard = selector.write().unwrap();
-                                match key_event.code {
-                                    Up | Char('k') => {
-                                        let i = match guard.select_state.selected() {
-                                            Some(i) if i > 0 => i - 1,
-                                            _ => 0,
-                                        };
-                                        guard.select_state.select(Some(i));
-                                        None
-                                    }
-                                    Down | Char('j') => {
-                                        let i = match guard.select_state.selected() {
-                                            Some(i) if i < guard.items.len() - 1 => i + 1,
-                                            _ => guard.items.len() - 1,
-                                        };
-                                        guard.select_state.select(Some(i));
-                                        None
-                                    }
-                                    Enter => {
-                                        debug!("enter pressed");
-                                        Some(guard.select_state.selected())
-                                    }
-                                    Esc | Char('q') => {
-                                        debug!("esc or q pressed");
-                                        Some(None)
-                                    }
-                                    _ => None,
-                                }
-                            } else {
-                                None
-                            }
-                        };
-
-                        if let Some(selection) = selection {
-                            tx.send(selection).await.unwrap();
-                            break;
-                        }
-                    }
-                    Ok(())
-                }
-            }));
         }
-        start_tx.send(()).unwrap();
+        let _: CliTask = tokio::spawn({
+            let selector = Arc::clone(selector);
+            {
+                selector.write().unwrap().is_running = true;
+            }
+            async move {
+                loop {
+                    let key_event = {
+                        if let Ok(bytes) = rx.recv().await {
+                            match Event::parse_from(&bytes) {
+                                Ok(None) => {
+                                    warn!("Couldn't fully parse bytes to terminal event");
+                                    None
+                                }
+                                Err(e) => {
+                                    error!("Couldn't parse bytes to terminal event: {e}");
+                                    None
+                                }
+                                Ok(Some(Event::Key(key_event))) => Some(key_event),
+                                _ => None,
+                            }
+                        } else {
+                            None
+                        }
+                    };
+                    let tx = { selector.read().unwrap().tx.clone() };
+                    let selection = {
+                        if let Some(key_event) = key_event {
+                            use terminput::KeyCode::*;
+                            let mut guard = selector.write().unwrap();
+                            match key_event.code {
+                                Up | Char('k') => {
+                                    let i = match guard.select_state.selected() {
+                                        Some(i) if i > 0 => i - 1,
+                                        _ => 0,
+                                    };
+                                    guard.select_state.select(Some(i));
+                                    None
+                                }
+                                Down | Char('j') => {
+                                    let i = match guard.select_state.selected() {
+                                        Some(i) if i < guard.items.len() - 1 => i + 1,
+                                        _ => guard.items.len() - 1,
+                                    };
+                                    guard.select_state.select(Some(i));
+                                    None
+                                }
+                                Enter => {
+                                    debug!("enter pressed");
+                                    Some(guard.select_state.selected())
+                                }
+                                Esc | Char('q') => {
+                                    debug!("esc or q pressed");
+                                    Some(None)
+                                }
+                                _ => None,
+                            }
+                        } else {
+                            None
+                        }
+                    };
+
+                    if let Some(selection) = selection {
+                        tx.send(selection).await.unwrap();
+                        break;
+                    }
+                }
+                {
+                    selector.write().unwrap().is_running = false;
+                }
+                Ok(())
+            }
+        });
         Ok(())
     }
 

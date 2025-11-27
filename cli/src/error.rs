@@ -60,7 +60,7 @@ impl From<mlua::Error> for Error {
 pub enum EventSendError {
     #[error("IO send error: {0}")]
     IO(SendError<ClientEvent>),
-    #[error("Popup send error: {0}")]
+    #[error("UI send error: {0}")]
     UI(SendError<UIEvent>),
     #[error("Bytes send error: {0}")]
     Bytes(SendError<Bytes>),

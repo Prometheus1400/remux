@@ -6,13 +6,7 @@ mod prelude;
 mod states;
 mod widgets;
 
-use std::io::stdout;
-
 use clap::Parser;
-use crossterm::{
-    execute,
-    terminal::{EnterAlternateScreen, LeaveAlternateScreen},
-};
 use ratatui::crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use remux_core::{
     communication,

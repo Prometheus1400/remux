@@ -6,12 +6,7 @@ use remux_core::{
     communication,
     events::{CliEvent, DaemonEvent},
 };
-use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    net::UnixStream,
-    sync::mpsc,
-    time::interval,
-};
+use tokio::{io::AsyncReadExt, net::UnixStream, sync::mpsc, time::interval};
 use tracing::{Instrument, debug};
 
 use crate::{
@@ -29,20 +24,21 @@ use ClientEvent::*;
 
 #[derive(Debug)]
 enum ClientState {
-    Normal,
-    SelectingSession,
+    Normal,           // running normally with stdin parsed into events and sent to daemon
+    SelectingSession, // means that the ui is currently busy selecting redirects stdin to ui selector
 }
 
 #[derive(Debug)]
 pub struct Client {
+    _handle: ClientHandle,            // handle used to send the client events
     stream: UnixStream,               // the client owns the stream
-    handle: ClientHandle,             // handle used to send the client events
     rx: mpsc::Receiver<ClientEvent>,  // receiver for client events
     daemon_state: DaemonState,        // determines if currently accepting events from daemon
+    sync_daemon_state: bool,          // if the state is dirty only then do we need to sync to the ui
     ui_stdin_tx: mpsc::Sender<Bytes>, // this is for popup actor to connect to stdin
-    ui_handle: UIHandle,
-    input_parser: InputParser,
-    client_state: ClientState,
+    ui_handle: UIHandle,              // how the client sends messages to ui
+    input_parser: InputParser,        // converts streams of bytes into actionable events
+    client_state: ClientState,        // the current state of the client
 }
 impl Client {
     #[instrument(skip(stream))]
@@ -57,12 +53,13 @@ impl Client {
         let handle = ClientHandle { tx };
         let ui_handle = UI::spawn(handle.clone(), ui_stdin_rx)?;
         Ok(Self {
+            _handle: handle,
             stream,
-            handle,
             rx,
             ui_stdin_tx,
             ui_handle,
             daemon_state: DaemonState::default(),
+            sync_daemon_state: false,
             input_parser: InputParser::new(),
             client_state: ClientState::Normal,
         })
@@ -99,7 +96,7 @@ impl Client {
                                 }
                             }
                         },
-                        res = communication::recv_daemon_event(&mut self.stream), if matches!(self.client_state, ClientState::Normal) => {
+                        res = communication::recv_daemon_event(&mut self.stream) => {
                             match res {
                                 Ok(event) => {
                                     match event {
@@ -112,24 +109,22 @@ impl Client {
                                             self.ui_handle.kill().await.unwrap();
                                             break;
                                         }
-                                        DaemonEvent::SwitchSessionOptions{session_ids} => {
-                                            debug!("DaemonEvent(SwitchSessionOptions({session_ids:?}))");
-                                            self.client_state = ClientState::SelectingSession;
-                                            // self.widget_runner_handle.select_session(session_ids).await?;
-                                        }
                                         DaemonEvent::CurrentSessions(session_ids) => {
                                             debug!("DaemonEvent(CurrentSessions({session_ids:?}))");
                                             self.daemon_state.set_sessions(session_ids);
+                                            self.sync_daemon_state = true;
                                         }
                                         DaemonEvent::ActiveSession(session_id) => {
                                             debug!("DaemonEvent(ActiveSession({session_id}))");
                                             self.daemon_state.set_active_session(session_id);
+                                            self.sync_daemon_state = true;
                                         }
                                         DaemonEvent::NewSession(session_id) => {
                                             debug!("DaemonEvent(NewSession({session_id}))");
                                             self.daemon_state.add_session(session_id);
+                                            self.sync_daemon_state = true;
                                         }
-                                        DaemonEvent::DeletedSession(session_id) => {
+                                        DaemonEvent::DeletedSession(_session_id) => {
                                             todo!("implement delete session");
                                         }
                                     }
@@ -156,8 +151,7 @@ impl Client {
                                                             Action::SwitchSession => {
                                                                 self.client_state = ClientState::SelectingSession;
                                                                 let items: Vec<Box<dyn ToString + Send + Sync>> = self.daemon_state.session_ids.iter().copied().map(|x| Box::new(x) as Box<dyn ToString + Send + Sync>).collect();
-                                                                self.ui_handle.select(items).await.unwrap();
-                                                                // self.widget_runner_handle.select_session(self.daemon_state.session_ids.clone()).await?;
+                                                                self.ui_handle.select(items, "Select Session".to_owned()).await.unwrap();
                                                             },
                                                         }
                                                     },
@@ -180,9 +174,10 @@ impl Client {
                                 }
                             }
                         },
-                        _ = ticker.tick() => {
-                            // TODO: make this event driven instead of on timer
+                        _ = ticker.tick(), if self.sync_daemon_state => {
+                            debug!("syncing daemon_state");
                             self.ui_handle.sync_daemon_state(self.daemon_state.clone()).await?;
+                            self.sync_daemon_state = false;
                         }
                     }
                 }

@@ -7,6 +7,10 @@ use std::{
 };
 
 use bytes::Bytes;
+use crossterm::{
+    execute,
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen},
+};
 use handle_macro::Handle;
 use ratatui::{Terminal, prelude::CrosstermBackend};
 use tokio::{
@@ -35,7 +39,10 @@ pub enum UIEvent {
     Kill,
     SyncDaemonState(DaemonState),
     SyncStatusLineState(StatusLineState),
-    Select(Vec<Box<dyn ToString + Send + Sync>>),
+    Select {
+        items: Vec<Box<dyn ToString + Send + Sync>>,
+        title: String,
+    },
 }
 use UIEvent::*;
 
@@ -93,12 +100,12 @@ impl UI {
 
         let handle_clone = self.handle.clone();
         let mut term = Terminal::new(CrosstermBackend::new(stdout())).unwrap();
-        term.clear()?;
         let (selector_tx, _) = broadcast::channel(10000);
-        let _ = tokio::spawn({
+        let _: CliTask = tokio::spawn({
             let selector_tx = selector_tx.clone();
             async move {
                 let mut ticker = interval(Duration::from_millis(16));
+                execute!(stdout(), EnterAlternateScreen)?;
                 loop {
                     tokio::select! {
                         Some(event) = self.rx.recv() => {
@@ -116,9 +123,9 @@ impl UI {
                                 SyncStatusLineState(status_line_state) => {
                                     self.status_line_state = status_line_state;
                                 }
-                                Select(items) => {
+                                Select{items, title} => {
                                     self.ui_state = UIState::Selecting;
-                                    Selector::run(&self.selector, selector_tx.subscribe(), items, "Select").unwrap();
+                                    Selector::run(&self.selector, selector_tx.subscribe(), items, title).unwrap();
                                 }
                                 Kill => {
                                     self.lua_handle.kill().unwrap();
@@ -162,7 +169,8 @@ impl UI {
                     }
                 }
                 debug!("ui stopped");
-                // Ok(())
+                execute!(stdout(), LeaveAlternateScreen)?;
+                Ok(())
             }
             .instrument(span)
         });
