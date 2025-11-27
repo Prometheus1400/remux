@@ -4,6 +4,7 @@ mod error;
 mod input_parser;
 mod prelude;
 mod states;
+mod utils;
 mod widgets;
 
 use clap::Parser;

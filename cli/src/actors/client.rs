@@ -14,6 +14,7 @@ use crate::{
     input_parser::{Action, InputParser, ParsedEvent},
     prelude::*,
     states::daemon_state::DaemonState,
+    utils::DisplayableVec,
 };
 
 #[derive(Handle)]
@@ -150,7 +151,7 @@ impl Client {
                                                         match local_action {
                                                             Action::SwitchSession => {
                                                                 self.client_state = ClientState::SelectingSession;
-                                                                let items: Vec<Box<dyn ToString + Send + Sync>> = self.daemon_state.session_ids.iter().copied().map(|x| Box::new(x) as Box<dyn ToString + Send + Sync>).collect();
+                                                                let items = DisplayableVec::new(self.daemon_state.session_ids.clone());
                                                                 self.ui_handle.select(items, "Select Session".to_owned()).await.unwrap();
                                                             },
                                                         }

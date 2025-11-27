@@ -11,7 +11,7 @@ use ratatui::{
 use terminput::Event;
 use tokio::sync::{broadcast, mpsc};
 
-use crate::prelude::*;
+use crate::{prelude::*, utils::DisplayableVec};
 
 pub struct Selector {
     pub select_state: ListState,
@@ -34,7 +34,7 @@ impl Selector {
     pub fn run<T: Into<String>>(
         selector: &Arc<RwLock<Self>>,
         mut rx: broadcast::Receiver<Bytes>,
-        items: Vec<Box<dyn ToString + Send + Sync>>,
+        items: DisplayableVec,
         title: T,
     ) -> Result<()> {
         {
@@ -42,7 +42,7 @@ impl Selector {
             if guard.is_running {
                 return Err(Error::Custom("duplicate task".to_owned()));
             }
-            guard.items = items.into_iter().map(|x| x.to_string()).collect();
+            guard.items = items.to_strings();
             guard.title = title.into();
         }
         let _: CliTask = tokio::spawn({

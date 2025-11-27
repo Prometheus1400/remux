@@ -1,8 +1,6 @@
 use std::{
-    cell::RefCell,
     io::stdout,
-    rc::Rc,
-    sync::{Arc, Mutex, RwLock},
+    sync::{Arc, RwLock},
     time::Duration,
 };
 
@@ -15,7 +13,6 @@ use handle_macro::Handle;
 use ratatui::{Terminal, prelude::CrosstermBackend};
 use tokio::{
     sync::{broadcast, mpsc},
-    task::LocalSet,
     time::interval,
 };
 use tracing::Instrument;
@@ -29,6 +26,7 @@ use crate::{
     },
     prelude::*,
     states::{daemon_state::DaemonState, status_line_state::StatusLineState},
+    utils::DisplayableVec,
     widgets::Selector,
 };
 
@@ -39,10 +37,7 @@ pub enum UIEvent {
     Kill,
     SyncDaemonState(DaemonState),
     SyncStatusLineState(StatusLineState),
-    Select {
-        items: Vec<Box<dyn ToString + Send + Sync>>,
-        title: String,
-    },
+    Select { items: DisplayableVec, title: String },
 }
 use UIEvent::*;
 
@@ -106,6 +101,7 @@ impl UI {
             async move {
                 let mut ticker = interval(Duration::from_millis(16));
                 execute!(stdout(), EnterAlternateScreen)?;
+                term.clear()?;
                 loop {
                     tokio::select! {
                         Some(event) = self.rx.recv() => {
