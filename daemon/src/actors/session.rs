@@ -35,24 +35,31 @@ use SessionEvent::*;
 
 pub struct Session {
     id: u32,
+    name: String,
     handle: SessionHandle,
     session_manager_handle: SessionManagerHandle,
     rx: mpsc::Receiver<SessionEvent>,
     window_handle: WindowHandle,
 }
 impl Session {
-    #[instrument(skip(session_manager_handle), fields(session_id = id))]
-    pub fn spawn(id: u32, session_manager_handle: SessionManagerHandle) -> Result<SessionHandle> {
-        let session = Session::new(id, session_manager_handle);
+    #[instrument(skip(name, session_manager_handle))]
+    pub fn spawn_named(id: u32, name: impl Into<String>, session_manager_handle: SessionManagerHandle) -> Result<SessionHandle> {
+        let session = Session::new(id, name.into(), session_manager_handle);
         session.run()
     }
-    #[instrument(skip(session_manager_handle), fields(session_id = id))]
-    fn new(id: u32, session_manager_handle: SessionManagerHandle) -> Self {
+    #[instrument(skip(session_manager_handle))]
+    pub fn spawn_unnamed(id: u32, session_manager_handle: SessionManagerHandle) -> Result<SessionHandle> {
+        let session = Session::new(id, id.to_string(), session_manager_handle);
+        session.run()
+    }
+    #[instrument(skip(session_manager_handle), fields(session_id = id, name = name))]
+    fn new(id: u32, name: String, session_manager_handle: SessionManagerHandle) -> Self {
         let (tx, rx) = mpsc::channel(10);
         let handle = SessionHandle { tx };
         let window_handle = Window::spawn(handle.clone()).unwrap();
         Self {
             id,
+            name,
             session_manager_handle,
             handle,
             rx,
