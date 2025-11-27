@@ -27,7 +27,7 @@ use crate::{
     prelude::*,
     states::{daemon_state::DaemonState, status_line_state::StatusLineState},
     utils::DisplayableVec,
-    widgets::Selector,
+    widgets::{BasicSelector, FuzzySelector, Selector},
 };
 
 #[derive(Handle)]
@@ -57,7 +57,8 @@ pub struct UI {
     lua_handle: LuaHandle,
     client_handle: ClientHandle,
     ui_state: UIState,
-    selector: Arc<RwLock<Selector>>,
+    basic_selector: Arc<RwLock<BasicSelector>>,
+    fuzzy_selector: Arc<RwLock<FuzzySelector>>,
     selector_rx: mpsc::Receiver<Option<usize>>,
     stdin_rx: mpsc::Receiver<Bytes>,
 }
@@ -83,7 +84,8 @@ impl UI {
             lua_handle,
             client_handle,
             ui_state: UIState::Normal,
-            selector: Selector::new(selector_tx),
+            basic_selector: BasicSelector::new(selector_tx.clone()),
+            fuzzy_selector: FuzzySelector::new(selector_tx.clone()),
             selector_rx,
             stdin_rx,
         })
@@ -117,7 +119,7 @@ impl UI {
                                 }
                                 Select{items, title} => {
                                     self.ui_state = UIState::Selecting;
-                                    Selector::run(&self.selector, selector_tx.subscribe(), items, title).unwrap();
+                                    FuzzySelector::run(&self.fuzzy_selector, selector_tx.subscribe(), items, title).unwrap();
                                 }
                                 Kill => {
                                     self.lua_handle.kill().unwrap();
@@ -153,7 +155,7 @@ impl UI {
 
                                 // render selector if active
                                 if self.ui_state == UIState::Selecting {
-                                    Selector::render(&self.selector, f);
+                                    FuzzySelector::render(&self.fuzzy_selector, f);
                                 }
 
                             }).unwrap();
