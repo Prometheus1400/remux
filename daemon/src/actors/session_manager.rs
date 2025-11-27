@@ -179,10 +179,10 @@ impl SessionManager {
     }
     async fn handle_client_disconnect(&mut self, client_id: u32) -> Result<()> {
         let client_handle = self.clients.remove(&client_id);
-        if let Some(session_id) = self.client_to_session_mapping.remove(&client_id) {
-            if let Some(clients) = self.session_to_client_mapping.get_mut(&session_id) {
-                clients.retain(|c| c != &client_id);
-            }
+        if let Some(session_id) = self.client_to_session_mapping.remove(&client_id)
+            && let Some(clients) = self.session_to_client_mapping.get_mut(&session_id)
+        {
+            clients.retain(|c| c != &client_id);
         }
         if let Some(client_handle) = client_handle {
             client_handle.disconnect().await.unwrap();
@@ -251,10 +251,10 @@ impl SessionManager {
 
     fn unmap_client(&mut self, client_id: u32) -> Option<ClientConnectionHandle> {
         let client_handle = self.clients.remove(&client_id)?;
-        if let Some(session_id) = self.client_to_session_mapping.remove(&client_id) {
-            if let Some(clients) = self.session_to_client_mapping.get_mut(&session_id) {
-                clients.retain(|c| c != &client_id);
-            }
+        if let Some(session_id) = self.client_to_session_mapping.remove(&client_id)
+            && let Some(clients) = self.session_to_client_mapping.get_mut(&session_id)
+        {
+            clients.retain(|c| c != &client_id);
         }
         Some(client_handle)
     }

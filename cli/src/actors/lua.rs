@@ -146,7 +146,7 @@ impl Lua {
         let (tx, rx) = mpsc::channel();
         let handle = LuaHandle { tx };
         let handle_clone = handle.clone();
-        let _: CliTask = tokio::task::spawn_blocking(|| {
+        tokio::task::spawn_blocking(|| {
             let mut actor = Self::new(ui_handle, handle, rx);
             actor.initialize_lua_state().unwrap();
             let code = fs::read_to_string("defaults/statusbar.lua").unwrap();
@@ -178,7 +178,7 @@ impl Lua {
                 runtime
                     .block_on(async move { ui_handle_clone.sync_status_line_state(status_line_state_clone).await })?;
             }
-            Ok(())
+            Ok::<(), Error>(())
         });
 
         Ok(handle_clone)

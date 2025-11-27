@@ -1,12 +1,10 @@
 use bytes::Bytes;
 use handle_macro::Handle;
 use remux_core::{communication, events::DaemonEvent};
-use tokio::{io::AsyncWriteExt, net::UnixStream, sync::mpsc};
+use tokio::{net::UnixStream, sync::mpsc};
 use tracing::Instrument;
 
-use crate::{
-    actors::session_manager::SessionManagerHandle, control_signals::CLEAR, layout::SplitDirection, prelude::*,
-};
+use crate::{actors::session_manager::SessionManagerHandle, layout::SplitDirection, prelude::*};
 
 #[allow(unused)]
 #[derive(Handle)]
@@ -81,17 +79,14 @@ impl ClientConnection {
                                 }
                                 FailedAttachToSession{..} => {
                                     debug!("Client: FailedAttachToSession");
-                                    self.state = ClientConnectionState::Unattached;
-                                    todo!();
+                                    communication::send_event(&mut self.stream, DaemonEvent::Disconnected).await.unwrap();
                                 }
                                 DetachFromSession{..} => {
-                                    // for now if a client is detached from the session lets just
-                                    // kill it
                                     debug!("Client: DetachFromSession");
                                     self.state = ClientConnectionState::Unattached;
-                                    self.stream.write_all(CLEAR).await.unwrap();
                                 }
                                 Disconnect => {
+                                    trace!("Client: Disconnect");
                                     communication::send_event(&mut self.stream, DaemonEvent::Disconnected).await.unwrap();
                                 }
                                 SessionOutput{bytes} => {

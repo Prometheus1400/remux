@@ -5,6 +5,7 @@ use crate::{
     prelude::*,
 };
 
+#[allow(unused)]
 const CTRL_SPACE: u8 = 0x00;
 const CTRL_B: u8 = 0x02;
 const PERCENT: u8 = 0x25;

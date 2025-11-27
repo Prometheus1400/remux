@@ -95,7 +95,7 @@ impl UI {
         let handle_clone = self.handle.clone();
         let mut term = Terminal::new(CrosstermBackend::new(stdout())).unwrap();
         let (selector_tx, _) = broadcast::channel(10000);
-        let _: CliTask = tokio::spawn({
+        tokio::spawn({
             let selector_tx = selector_tx.clone();
             async move {
                 let mut ticker = interval(Duration::from_millis(16));
@@ -162,7 +162,7 @@ impl UI {
                 }
                 debug!("ui stopped");
                 execute!(stdout(), LeaveAlternateScreen)?;
-                Ok(())
+                Ok::<(), Error>(())
             }
             .instrument(span)
         });

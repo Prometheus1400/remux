@@ -45,7 +45,7 @@ impl Selector {
             guard.items = items.to_strings();
             guard.title = title.into();
         }
-        let _: CliTask = tokio::spawn({
+        tokio::spawn({
             let selector = Arc::clone(selector);
             {
                 selector.write().unwrap().is_running = true;
@@ -115,7 +115,7 @@ impl Selector {
                 {
                     selector.write().unwrap().is_running = false;
                 }
-                Ok(())
+                Ok::<(), Error>(())
             }
         });
         Ok(())
