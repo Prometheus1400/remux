@@ -152,7 +152,7 @@ impl Client {
                                                             Action::SwitchSession => {
                                                                 self.client_state = ClientState::SelectingSession;
                                                                 let items = DisplayableVec::new(self.daemon_state.session_ids.clone());
-                                                                self.ui_handle.select(items, "Select Session".to_owned()).await.unwrap();
+                                                                self.ui_handle.select_basic(items, "Select Session".to_owned()).await.unwrap();
                                                             },
                                                         }
                                                     },

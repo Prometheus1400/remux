@@ -1,17 +1,8 @@
 use std::sync::{Arc, RwLock};
 
 use bytes::Bytes;
-use fuzzy_matcher::{
-    FuzzyMatcher,
-    skim::{SkimMatcherV2, SkimScoreConfig},
-};
-use ratatui::{
-    Frame,
-    layout::Rect,
-    prelude::*,
-    style::{Modifier, Style},
-    widgets::{Block, Borders, List, ListState, Paragraph},
-};
+use fuzzy_matcher::{FuzzyMatcher, skim::SkimMatcherV2};
+use ratatui::{Frame, widgets::ListState};
 use terminput::Event;
 use tokio::sync::{broadcast, mpsc};
 
@@ -28,6 +19,7 @@ impl IndexedItem {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct FuzzySelector {
     pub select_state: ListState,
     pub title: Option<String>,
@@ -83,6 +75,7 @@ impl Selector for FuzzySelector {
                 loop {
                     let selection = {
                         if let Ok(bytes) = rx.recv().await {
+                            debug!("bytes gotten in fuzzy selector");
                             use terminput::KeyCode::*;
                             match Event::parse_from(&bytes) {
                                 Ok(None) => {
@@ -179,6 +172,12 @@ impl Selector for FuzzySelector {
     }
 
     fn render(selector: &Arc<RwLock<Self>>, f: &mut Frame) {
+        use ratatui::{
+            layout::Rect,
+            prelude::*,
+            style::{Modifier, Style},
+            widgets::{Block, Borders, List, Paragraph},
+        };
         let mut guard = selector.write().unwrap();
         let size = f.area();
 

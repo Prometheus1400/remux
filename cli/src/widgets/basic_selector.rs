@@ -1,18 +1,13 @@
 use std::sync::{Arc, RwLock};
 
 use bytes::Bytes;
-use ratatui::{
-    Frame,
-    layout::Rect,
-    prelude::*,
-    style::{Modifier, Style},
-    widgets::{Block, Borders, List, ListState},
-};
+use ratatui::{Frame, widgets::ListState};
 use terminput::Event;
 use tokio::sync::{broadcast, mpsc};
 
 use crate::{prelude::*, utils::DisplayableVec, widgets::traits::Selector};
 
+#[derive(Debug, Clone)]
 pub struct BasicSelector {
     pub select_state: ListState,
     pub title: Option<String>,
@@ -53,8 +48,10 @@ impl Selector for BasicSelector {
             }
             async move {
                 loop {
+                    debug!("Kaleb");
                     let key_event = {
                         if let Ok(bytes) = rx.recv().await {
+                            debug!("bytes gotten in basic selector");
                             match Event::parse_from(&bytes) {
                                 Ok(None) => {
                                     warn!("Couldn't fully parse bytes to terminal event");
@@ -74,6 +71,7 @@ impl Selector for BasicSelector {
                     let tx = { selector.read().unwrap().tx.clone() };
                     let selection = {
                         if let Some(key_event) = key_event {
+                            debug!("key pressed");
                             use terminput::KeyCode::*;
                             let mut guard = selector.write().unwrap();
                             match key_event.code {
@@ -123,6 +121,12 @@ impl Selector for BasicSelector {
     }
 
     fn render(selector: &Arc<RwLock<Self>>, f: &mut Frame) {
+        use ratatui::{
+            layout::Rect,
+            prelude::*,
+            style::{Modifier, Style},
+            widgets::{Block, Borders, List},
+        };
         let mut guard = selector.write().unwrap();
         let size = f.area();
 
