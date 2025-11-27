@@ -1,16 +1,11 @@
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use bytes::Bytes;
-use fuzzy_matcher::{
-    FuzzyMatcher,
-    skim::{SkimMatcherV2, SkimScoreConfig},
-};
+use fuzzy_matcher::{FuzzyMatcher, skim::SkimMatcherV2};
 use ratatui::{
     Frame,
     layout::Rect,
-    prelude::*,
-    style::{Modifier, Style},
-    widgets::{Block, Borders, List, ListState, Paragraph},
+    widgets::{ListState, Padding},
 };
 use terminput::{Event, KeyCode};
 use tokio::sync::{broadcast, mpsc};
@@ -50,23 +45,6 @@ impl FuzzySelector {
             query: "".to_owned(),
         }))
     }
-
-    /// Helper to perform fuzzy filtering and update state
-    fn filter_items(guard: &mut RwLockWriteGuard<'_, Self>, matcher: &SkimMatcherV2) {
-        let mut filtered_items = guard
-            .items
-            .iter()
-            .filter_map(|x| {
-                matcher
-                    .fuzzy_match(&x.item, &guard.query)
-                    .map(|score| (score, x.clone()))
-            })
-            .collect::<Vec<(i64, IndexedItem)>>();
-
-        filtered_items.sort_by(|a, b| b.0.cmp(&a.0));
-        filtered_items.reverse();
-        guard.filtered_items = filtered_items.into_iter().map(|x| x.1).collect();
-    }
 }
 
 impl Selector for FuzzySelector {
@@ -76,42 +54,33 @@ impl Selector for FuzzySelector {
         items: DisplayableVec,
         title: T,
     ) -> Result<()> {
-        // --- Setup Phase ---
+        let matcher = SkimMatcherV2::default();
         {
             let mut guard = selector.write().unwrap();
             if guard.is_running {
                 return Err(Error::Custom("duplicate task".to_owned()));
             }
+            guard.is_running = true;
             guard.items = items
                 .to_strings()
                 .into_iter()
                 .enumerate()
                 .map(|pair| IndexedItem::new(pair.0, pair.1))
                 .collect();
-
-            // Initial filter/setup
-            guard.filtered_items = guard.items.clone();
-            let opt = guard.filtered_items.last().map(|_| 0);
+            guard.filtered_items = filter_items(&matcher, &guard.query, &guard.items);
+            let opt = Some(guard.filtered_items.len().saturating_sub(1));
             guard.select_state.select(opt); // Select first item if exists
-
             guard.title = Some(title.into());
-            guard.is_running = true;
             guard.query = String::new();
-        } // Lock dropped
+        }
 
-        // --- Spawn Asynchronous Task ---
         let selector_clone = Arc::clone(selector);
         tokio::spawn(async move {
-            let matcher = SkimMatcherV2::default();
-
             loop {
                 let final_selection: Option<Option<usize>> = {
                     if let Ok(bytes) = rx.recv().await {
-                        // Task yields here, no lock held
-
                         match Event::parse_from(&bytes) {
                             Ok(Some(Event::Key(key_code))) => {
-                                // Acquire lock to mutate state
                                 let mut guard = selector_clone.write().unwrap();
                                 let mut result: Option<Option<usize>> = None;
 
@@ -124,11 +93,11 @@ impl Selector for FuzzySelector {
                                             .and_then(|i| guard.filtered_items.get(i))
                                             .map(|item| item.index);
 
-                                        result = Some(original_index); // Signal completion
+                                        result = Some(original_index);
                                     }
                                     KeyCode::Esc => {
                                         debug!("esc pressed");
-                                        result = Some(None); // Signal cancellation
+                                        result = Some(None);
                                     }
                                     KeyCode::Up => {
                                         let current_index = guard.select_state.selected().unwrap_or(0);
@@ -143,21 +112,18 @@ impl Selector for FuzzySelector {
                                     }
                                     KeyCode::Backspace => {
                                         guard.query.pop();
-                                        Self::filter_items(&mut guard, &matcher);
-                                        let opt = guard.filtered_items.last().map(|_| 0);
+                                        guard.filtered_items = filter_items(&matcher, &guard.query, &guard.items);
+                                        let opt = Some(guard.filtered_items.len().saturating_sub(1));
                                         guard.select_state.select(opt);
                                     }
                                     KeyCode::Char(c) => {
                                         guard.query.push(c);
-                                        Self::filter_items(&mut guard, &matcher);
-                                        let opt = guard.filtered_items.last().map(|_| 0);
+                                        guard.filtered_items = filter_items(&matcher, &guard.query, &guard.items);
+                                        let opt = Some(guard.filtered_items.len().saturating_sub(1));
                                         guard.select_state.select(opt);
                                     }
                                     _ => {}
                                 }
-
-                                // CRITICAL: Explicitly drop the guard before any subsequent await
-                                drop(guard);
 
                                 result
                             }
@@ -172,25 +138,19 @@ impl Selector for FuzzySelector {
                             _ => None,
                         }
                     } else {
-                        // rx channel closed
                         break;
                     }
                 };
 
                 // If a final selection was determined (Enter/Esc), send the result and break.
                 if let Some(selection) = final_selection {
-                    // Acquire a read lock just to get a clone of the Sender (tx)
                     let tx_clone = selector_clone.read().unwrap().tx.clone();
-                    // Lock is dropped immediately after clone
-
                     tx_clone.send(selection).await.unwrap();
                     break;
                 }
-            } // end loop
+            }
 
-            // --- Cleanup Phase ---
             {
-                // Re-acquire lock to set state to finished
                 selector_clone.write().unwrap().is_running = false;
             }
             Ok::<(), Error>(())
@@ -199,53 +159,85 @@ impl Selector for FuzzySelector {
     }
 
     fn render(selector: &Arc<RwLock<Self>>, f: &mut Frame) {
-        // Use read lock for synchronous, non-mutating rendering
-        let guard = selector.read().unwrap();
-        let size = f.area();
-
-        // Calculate popup size
-        let width = (size.width / 2).min(50);
-        let height = (guard.filtered_items.len() as u16 + 8).min(size.height / 2);
-        let x = (size.width.saturating_sub(width)) / 2;
-        let y = (size.height.saturating_sub(height)) / 2;
-        let rect = Rect::new(x, y, width, height);
+        use ratatui::{
+            prelude::*,
+            style::{Modifier, Style},
+            widgets::{Block, Borders, List, Paragraph},
+        };
+        let (title, query, items, mut select_state) = {
+            let guard = selector.read().unwrap();
+            (
+                guard.title.as_ref().unwrap_or(&"Select Item".to_owned()).clone(),
+                guard.query.clone(),
+                guard
+                    .filtered_items
+                    .iter()
+                    .map(|pair| pair.item.clone())
+                    .collect::<Vec<String>>(),
+                guard.select_state.clone(),
+            )
+        };
+        let rect = get_rect(f);
 
         let chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Min(1), Constraint::Length(3)])
+            .constraints([Constraint::Min(0), Constraint::Length(3)])
             .split(rect);
 
-        let list = List::new(
-            guard
-                .filtered_items
-                .iter()
-                .map(|pair| pair.item.clone())
-                .collect::<Vec<String>>(),
-        )
-        .block(
+        let max_height = chunks[0].height;
+        let items_height = items.len() as u16 + 2;
+        let subchunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(max_height - items_height),
+                Constraint::Length(items_height),
+            ])
+            .split(chunks[0]);
+
+        let list = List::new(items)
+            .block(Block::default().padding(Padding::uniform(1)))
+            .highlight_symbol(">> ")
+            .highlight_style(
+                Style::default()
+                    .fg(ratatui::style::Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            );
+
+        let display_block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().bold())
+            .title(title)
+            .title_alignment(ratatui::layout::Alignment::Center);
+
+        let display_query = Paragraph::new(query).block(
             Block::default()
                 .borders(Borders::ALL)
                 .border_style(Style::default().bold())
-                .title(guard.title.as_ref().unwrap_or(&String::from("Select Item")).clone())
-                .title_alignment(ratatui::layout::Alignment::Center),
-        )
-        .highlight_symbol(">> ")
-        .highlight_style(
-            Style::default()
-                .fg(ratatui::style::Color::Green)
-                .add_modifier(Modifier::BOLD),
+                .padding(Padding::horizontal(1)),
         );
 
-        // Temporarily mutable state for rendering list
-        let mut list_state = guard.select_state.clone();
-        f.render_stateful_widget(list, chunks[0], &mut list_state);
-
-        let paragraph = Paragraph::new(guard.query.clone()).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(Style::default().bold()),
-        );
-
-        f.render_widget(paragraph, chunks[1]);
+        f.render_widget(display_block, chunks[0]);
+        f.render_stateful_widget(list, subchunks[1], &mut select_state);
+        f.render_widget(display_query, chunks[1]);
     }
+}
+
+fn filter_items(matcher: &SkimMatcherV2, query: &str, items: &[IndexedItem]) -> Vec<IndexedItem> {
+    let mut filtered_items = items
+        .iter()
+        .filter_map(|x| matcher.fuzzy_match(&x.item, query).map(|score| (score, x.clone())))
+        .collect::<Vec<(i64, IndexedItem)>>();
+
+    filtered_items.sort_by(|a, b| b.0.cmp(&a.0));
+    filtered_items.reverse();
+    filtered_items.into_iter().map(|x| x.1).collect::<Vec<IndexedItem>>()
+}
+
+fn get_rect(f: &Frame) -> Rect {
+    let size = f.area();
+    let width = size.width / 2;
+    let height = size.height / 2;
+    let x = (size.width.saturating_sub(width)) / 2;
+    let y = (size.height.saturating_sub(height)) / 2;
+    Rect::new(x, y, width, height)
 }
