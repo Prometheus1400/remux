@@ -17,7 +17,7 @@ use crate::{
 #[derive(Handle)]
 pub enum SessionEvent {
     // user input
-    UserInput { bytes: Bytes },
+    UserInput(Bytes),
     // user commands
     //  - client id not needed anymore because session controls active window and
     //    window controls active pane which should be sufficient)
@@ -69,7 +69,7 @@ impl Session {
                 loop {
                     if let Some(event) = self.rx.recv().await {
                         match event {
-                            UserInput { bytes } => {
+                            UserInput(bytes) => {
                                 trace!("Session: UserInput");
                                 self.handle_user_input(bytes).await.unwrap();
                             }

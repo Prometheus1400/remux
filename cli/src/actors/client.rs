@@ -88,7 +88,7 @@ impl Client {
                                             if let Some(index) = index {
                                                 let selected_session = self.daemon_state.session_ids[index];
                                                 debug!("sending session selection: {selected_session}");
-                                                communication::send_event(&mut self.stream, CliEvent::SwitchSession { session_id: selected_session  }).await.unwrap();
+                                                communication::send_event(&mut self.stream, CliEvent::SwitchSession(selected_session)).await.unwrap();
                                             }
                                             debug!("Returning to normal state");
                                             self.client_state = ClientState::Normal;
@@ -101,9 +101,9 @@ impl Client {
                             match res {
                                 Ok(event) => {
                                     match event {
-                                        DaemonEvent::Raw{bytes} => {
+                                        DaemonEvent::Raw(bytes) => {
                                             trace!("DaemonEvent(Raw({bytes:?}))");
-                                            self.ui_handle.output(Bytes::from(bytes)).await?;
+                                            self.ui_handle.output(bytes).await?;
                                         }
                                         DaemonEvent::Disconnected => {
                                             debug!("DaemonEvent(Disconnected)");

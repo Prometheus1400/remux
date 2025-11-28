@@ -9,11 +9,11 @@ use crate::{actors::session_manager::SessionManagerHandle, layout::SplitDirectio
 #[allow(unused)]
 #[derive(Handle)]
 pub enum ClientConnectionEvent {
-    AttachToSession { session_id: u32 },
-    SuccessAttachToSession { session_id: u32 },
-    FailedAttachToSession { session_id: u32 },
-    DetachFromSession { session_id: u32 },
-    SessionOutput { bytes: Bytes },
+    AttachToSession(u32),
+    SuccessAttachToSession(u32),
+    FailedAttachToSession(u32),
+    DetachFromSession(u32),
+    SessionOutput(Bytes),
     NewSession(u32),
     CurrentSessions(Vec<u32>),
     Disconnect,
@@ -67,12 +67,12 @@ impl ClientConnection {
                     tokio::select! {
                         Some(event) = self.rx.recv() => {
                             match event {
-                                AttachToSession{session_id} => {
+                                AttachToSession(session_id) => {
                                     debug!("Client: AttachToSession");
                                     self.session_manager_handle.client_connect(self.id, handle.clone(), session_id, true).await.unwrap();
                                     self.state = ClientConnectionState::Attaching(session_id);
                                 }
-                                SuccessAttachToSession{session_id} => {
+                                SuccessAttachToSession(session_id) => {
                                     debug!("Client: SuccessAttachToSession");
                                     self.state = ClientConnectionState::Attached(session_id);
                                     communication::send_event(&mut self.stream, DaemonEvent::ActiveSession(session_id)).await.unwrap();
@@ -89,9 +89,9 @@ impl ClientConnection {
                                     trace!("Client: Disconnect");
                                     communication::send_event(&mut self.stream, DaemonEvent::Disconnected).await.unwrap();
                                 }
-                                SessionOutput{bytes} => {
+                                SessionOutput(bytes) => {
                                     trace!("Client: SessionOutput");
-                                    communication::send_event(&mut self.stream, DaemonEvent::Raw{bytes: bytes.into()}).await.unwrap();
+                                    communication::send_event(&mut self.stream, DaemonEvent::Raw(bytes)).await.unwrap();
                                 }
                                 NewSession(session_id) => {
                                     trace!("Client: NewSession");
@@ -109,7 +109,7 @@ impl ClientConnection {
                                     match event {
                                         CliEvent::Raw(bytes) => {
                                             trace!("Client Event Input: raw({bytes:?})");
-                                            self.session_manager_handle.user_input(self.id, Bytes::from(bytes)).await.unwrap();
+                                            self.session_manager_handle.user_input(self.id, bytes).await.unwrap();
                                         },
                                         CliEvent::Detach => {
                                             trace!("Client Event Input: detach");
@@ -135,7 +135,7 @@ impl ClientConnection {
                                             debug!("Client Event Input: prev pane");
                                             self.session_manager_handle.user_iterate_pane(self.id, false).await.unwrap();
                                         },
-                                        CliEvent::SwitchSession {session_id} => {
+                                        CliEvent::SwitchSession(session_id) => {
                                             debug!("Client Event Input: SwitchSession{session_id}");
                                             self.session_manager_handle.client_switch_session(self.id, session_id).await.unwrap();
                                         }

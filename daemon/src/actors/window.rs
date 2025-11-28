@@ -17,9 +17,7 @@ use crate::{
 
 #[derive(Handle)]
 pub enum WindowEvent {
-    UserInput {
-        bytes: Bytes,
-    }, // input from user
+    UserInput(Bytes), // input from user
     PaneOutput {
         id: usize,
         bytes: Bytes,
@@ -263,7 +261,7 @@ impl Window {
                 loop {
                     if let Some(event) = self.rx.recv().await {
                         match event {
-                            UserInput { bytes } => {
+                            UserInput(bytes) => {
                                 trace!("Window: UserInput");
                                 self.handle_user_input(bytes).await.unwrap();
                             }

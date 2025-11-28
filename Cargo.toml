@@ -6,7 +6,7 @@ resolver = "3"
 edition = "2024"
 
 [workspace.dependencies]
-bytes = { version = "1.11.0" }
+bytes = { version = "1.11.0", features = ["serde"] }
 crossterm = "0.29.0"
 derive_more = { version = "2", features = ["display"] }
 itertools = { version = "0.14" }

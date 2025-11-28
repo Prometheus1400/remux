@@ -1,3 +1,4 @@
+use bytes::Bytes;
 use remux_core::events::CliEvent;
 
 use crate::{
@@ -40,7 +41,7 @@ impl InputParser {
                         let b_next = self.buf[i + 1];
                         if i > 0 {
                             let old: Vec<u8> = self.buf.drain(..i).collect();
-                            events.push(DaemonAction(CliEvent::Raw(old)));
+                            events.push(DaemonAction(CliEvent::Raw(Bytes::from(old))));
                             i = 0;
                         }
                         match b_next {
@@ -80,7 +81,7 @@ impl InputParser {
                     } else {
                         let old: Vec<u8> = self.buf.drain(..i).collect();
                         if !old.is_empty() {
-                            events.push(DaemonAction(CliEvent::Raw(old)));
+                            events.push(DaemonAction(CliEvent::Raw(Bytes::from(old))));
                         }
                         break;
                     }
@@ -91,7 +92,7 @@ impl InputParser {
 
         let old: Vec<u8> = self.buf.drain(..i).collect();
         if !old.is_empty() {
-            events.push(DaemonAction(CliEvent::Raw(old)));
+            events.push(DaemonAction(CliEvent::Raw(Bytes::from(old))));
         }
         trace!("return from process with remaining {:?}", self.buf);
         events
