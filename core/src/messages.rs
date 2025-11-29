@@ -59,6 +59,7 @@ pub enum RequestBody {
 #[derive(Serialize, Deserialize, Debug, PartialEq, Display)]
 #[serde(tag = "type")]
 pub enum ResponseBody {
+    AttachResponse,
     #[display("sessions: {sessions:?}")]
     SessionsList { sessions: Vec<u32> },
 }
