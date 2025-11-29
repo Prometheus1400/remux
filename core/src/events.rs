@@ -1,8 +1,9 @@
+use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum CliEvent {
-    Raw(Vec<u8>), // raw user keypresses
+    Raw(Bytes), // raw user keypresses
 
     // pane related
     KillPane,
@@ -11,14 +12,14 @@ pub enum CliEvent {
     SplitPaneHorizontal,
     PrevPane,
 
-    SwitchSession { session_id: u32 }, // switch session - does nothing if session does not exist
+    SwitchSession(u32), // switch session - does nothing if session does not exist
 
     Detach,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum DaemonEvent {
-    Raw { bytes: Vec<u8> }, // raw response - ansii control chars
+    Raw(Bytes), // raw response - ansii control chars
 
     // session events
     CurrentSessions(Vec<u32>),

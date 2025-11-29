@@ -14,8 +14,8 @@ use crate::{
 
 #[derive(Handle)]
 pub enum PaneEvent {
-    UserInput { bytes: Bytes },
-    PtyOutput { bytes: Bytes },
+    UserInput(Bytes),
+    PtyOutput(Bytes),
     PtyDied,
     Render,   // uses the diff from prev state to get to desired state (falls back to rerender if no prev state)
     Rerender, // full rerender
@@ -77,11 +77,11 @@ impl Pane {
                 loop {
                     if let Some(event) = self.rx.recv().await {
                         match event {
-                            UserInput { bytes } => {
+                            UserInput(bytes) => {
                                 trace!("Pane: UserInput({bytes:?})");
                                 self.handle_input(bytes).await.unwrap();
                             }
-                            PtyOutput { bytes } => {
+                            PtyOutput(bytes) => {
                                 trace!("Pane: PtyOutput({bytes:?}");
                                 if let Err(e) = self.handle_pty_output(bytes).await {
                                     error!("Error while handling PTY output: {}", e);
