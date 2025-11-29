@@ -3,7 +3,7 @@ use std::time::Duration;
 use bytes::Bytes;
 use handle_macro::Handle;
 use remux_core::{
-    communication,
+    comm,
     events::{CliEvent, DaemonEvent},
 };
 use tokio::{io::AsyncReadExt, net::UnixStream, sync::mpsc, time::interval};
@@ -88,7 +88,7 @@ impl Client {
                                             if let Some(index) = index {
                                                 let selected_session = self.daemon_state.session_ids[index];
                                                 debug!("sending session selection: {selected_session}");
-                                                communication::send_event(&mut self.stream, CliEvent::SwitchSession(selected_session)).await.unwrap();
+                                                comm::send_event(&mut self.stream, CliEvent::SwitchSession(selected_session)).await.unwrap();
                                             }
                                             debug!("Returning to normal state");
                                             self.client_state = ClientState::Normal;
@@ -97,7 +97,7 @@ impl Client {
                                 }
                             }
                         },
-                        res = communication::recv_daemon_event(&mut self.stream) => {
+                        res = comm::recv_daemon_event(&mut self.stream) => {
                             match res {
                                 Ok(event) => {
                                     match event {
@@ -145,7 +145,7 @@ impl Client {
                                             for event in self.input_parser.process(&stdin_buf[..n]) {
                                                 match event {
                                                     ParsedEvent::DaemonAction(cli_event) => {
-                                                        communication::send_event(&mut self.stream, cli_event).await?;
+                                                        comm::send_event(&mut self.stream, cli_event).await?;
                                                     },
                                                     ParsedEvent::LocalAction(local_action) => {
                                                         match local_action {

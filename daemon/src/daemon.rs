@@ -1,7 +1,7 @@
 use std::fs::{File, remove_file};
 
 use remux_core::{
-    communication,
+    comm,
     daemon_utils::{get_sock_path, lock_daemon_file},
     messages::RequestBody,
 };
@@ -45,7 +45,7 @@ impl RemuxDaemon {
         loop {
             let (stream, _) = listener.accept().await?;
             info!("accepting connection");
-            if let Err(e) = handle_communication(self.session_manager_handle.clone(), stream).await {
+            if let Err(e) = handle_comm(self.session_manager_handle.clone(), stream).await {
                 error!("{e}");
             }
         }
@@ -53,8 +53,8 @@ impl RemuxDaemon {
 }
 
 #[instrument(skip(session_manager_handle, stream))]
-async fn handle_communication(session_manager_handle: SessionManagerHandle, mut stream: UnixStream) -> Result<()> {
-    let req = communication::read_req(&mut stream).await?;
+async fn handle_comm(session_manager_handle: SessionManagerHandle, mut stream: UnixStream) -> Result<()> {
+    let req = comm::read_req(&mut stream).await?;
     match req.body {
         RequestBody::Attach { session_id } => {
             debug!("running new client actor");

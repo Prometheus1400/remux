@@ -1,4 +1,4 @@
-pub mod communication;
+pub mod comm;
 pub mod constants;
 pub mod daemon_utils;
 pub mod error;

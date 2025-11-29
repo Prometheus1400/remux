@@ -1,6 +1,6 @@
 use bytes::Bytes;
 use handle_macro::Handle;
-use remux_core::{communication, events::DaemonEvent};
+use remux_core::{comm, events::DaemonEvent};
 use tokio::{net::UnixStream, sync::mpsc};
 use tracing::Instrument;
 
@@ -75,11 +75,11 @@ impl ClientConnection {
                                 SuccessAttachToSession(session_id) => {
                                     debug!("Client: SuccessAttachToSession");
                                     self.state = ClientConnectionState::Attached(session_id);
-                                    communication::send_event(&mut self.stream, DaemonEvent::ActiveSession(session_id)).await.unwrap();
+                                    comm::send_event(&mut self.stream, DaemonEvent::ActiveSession(session_id)).await.unwrap();
                                 }
                                 FailedAttachToSession{..} => {
                                     debug!("Client: FailedAttachToSession");
-                                    communication::send_event(&mut self.stream, DaemonEvent::Disconnected).await.unwrap();
+                                    comm::send_event(&mut self.stream, DaemonEvent::Disconnected).await.unwrap();
                                 }
                                 DetachFromSession{..} => {
                                     debug!("Client: DetachFromSession");
@@ -87,23 +87,23 @@ impl ClientConnection {
                                 }
                                 Disconnect => {
                                     trace!("Client: Disconnect");
-                                    communication::send_event(&mut self.stream, DaemonEvent::Disconnected).await.unwrap();
+                                    comm::send_event(&mut self.stream, DaemonEvent::Disconnected).await.unwrap();
                                 }
                                 SessionOutput(bytes) => {
                                     trace!("Client: SessionOutput");
-                                    communication::send_event(&mut self.stream, DaemonEvent::Raw(bytes)).await.unwrap();
+                                    comm::send_event(&mut self.stream, DaemonEvent::Raw(bytes)).await.unwrap();
                                 }
                                 NewSession(session_id) => {
                                     trace!("Client: NewSession");
-                                    communication::send_event(&mut self.stream, DaemonEvent::NewSession(session_id)).await.unwrap();
+                                    comm::send_event(&mut self.stream, DaemonEvent::NewSession(session_id)).await.unwrap();
                                 }
                                 CurrentSessions(session_ids) => {
                                     trace!("Client: NewSession");
-                                    communication::send_event(&mut self.stream, DaemonEvent::CurrentSessions(session_ids)).await.unwrap();
+                                    comm::send_event(&mut self.stream, DaemonEvent::CurrentSessions(session_ids)).await.unwrap();
                                 }
                             }
                         },
-                        res = communication::recv_cli_event(&mut self.stream), if matches!(self.state, ClientConnectionState::Attached(_)) => {
+                        res = comm::recv_cli_event(&mut self.stream), if matches!(self.state, ClientConnectionState::Attached(_)) => {
                             match res {
                                 Ok(event) => {
                                     match event {

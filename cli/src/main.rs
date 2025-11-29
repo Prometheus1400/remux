@@ -10,7 +10,7 @@ mod widgets;
 use clap::Parser;
 use ratatui::crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use remux_core::{
-    communication,
+    comm,
     daemon_utils::get_sock_path,
     messages::{RequestMessage, ResponseBody, ResponseMessage},
 };
@@ -74,7 +74,7 @@ async fn connect() -> Result<UnixStream> {
 #[instrument(skip(stream))]
 async fn handle_session_command(mut stream: UnixStream, command: SessionCommands) -> Result<()> {
     let req: RequestMessage = command.into();
-    let res: ResponseMessage = communication::send_and_recv(&mut stream, &req).await?;
+    let res: ResponseMessage = comm::send_and_recv(&mut stream, &req).await?;
     match res.body {
         ResponseBody::SessionsList { sessions } => {
             println!("{sessions:?}");
@@ -94,7 +94,7 @@ async fn run(command: Commands) -> Result<()> {
 #[instrument(skip(stream, attach_message))]
 async fn attach(mut stream: UnixStream, attach_message: RequestMessage) -> Result<()> {
     debug!("Sending attach request");
-    communication::write_message(&mut stream, &attach_message)
+    comm::write_message(&mut stream, &attach_message)
         .await
         .map_err(|source| Error::SendRequestMessage {
             message: attach_message,
