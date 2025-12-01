@@ -12,4 +12,16 @@ pub enum Error {
 
     #[error("Serialization error: {0}")]
     SerializationError(#[from] serde_json::Error),
+
+    #[error("Response Error: {0}")]
+    Response(ResponseError),
 }
+
+#[derive(Error, Debug)]
+pub enum ResponseError {
+    #[error("UnexpectedId: expected({expected}) actual({actual})")]
+    UnexpectedId{expected:u32, actual:u32},
+    #[error("Bad Status: {0}")]
+    Status(String)
+}
+

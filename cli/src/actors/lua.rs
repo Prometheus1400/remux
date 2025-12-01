@@ -8,12 +8,13 @@ use std::{
 };
 
 use mlua::Lua as MLua;
+use remux_core::states::DaemonState;
 use tokio::runtime::Handle;
 
 use crate::{
     actors::ui::UIHandle,
     prelude::*,
-    states::{daemon_state::DaemonState, status_line_state::StatusLineState},
+    states::{status_line_state::StatusLineState},
 };
 
 pub enum LuaEvent {

@@ -3,7 +3,6 @@ use std::fs::{File, remove_file};
 use remux_core::{
     comm,
     daemon_utils::{get_sock_path, lock_daemon_file},
-    messages::RequestBody,
 };
 use tokio::net::{UnixListener, UnixStream};
 
@@ -45,7 +44,7 @@ impl RemuxDaemon {
         loop {
             let (stream, _) = listener.accept().await?;
             info!("accepting connection");
-            if let Err(e) = handle_comm(self.session_manager_handle.clone(), stream).await {
+            if let Err(e) = handle_message(self.session_manager_handle.clone(), stream).await {
                 error!("{e}");
             }
         }
@@ -53,16 +52,16 @@ impl RemuxDaemon {
 }
 
 #[instrument(skip(session_manager_handle, stream))]
-async fn handle_comm(session_manager_handle: SessionManagerHandle, mut stream: UnixStream) -> Result<()> {
-    let req = comm::read_req(&mut stream).await?;
+async fn handle_message(session_manager_handle: SessionManagerHandle, mut stream: UnixStream) -> Result<()> {
+    use remux_core::messages::request::{self, DaemonRequestMessage, DaemonRequestMessageBody};
+
+    let req: DaemonRequestMessage = comm::read_message(&mut stream).await?;
+    debug!("Handling message: {req:?}");
     match req.body {
-        RequestBody::Attach { session_id } => {
+        DaemonRequestMessageBody::Attach(request::Attach { session_id, create }) => {
             debug!("running new client actor");
-            let client = ClientConnection::spawn(stream, session_manager_handle).unwrap();
-            client.attach_to_session(session_id).await.unwrap();
-        }
-        RequestBody::SessionsList => {
-            todo!()
+            let _client = ClientConnection::spawn(stream, session_manager_handle, session_id).unwrap();
+            // client.attach_to_session(session_id).await.unwrap();
         }
     };
     Ok(())

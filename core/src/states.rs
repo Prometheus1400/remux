@@ -1,5 +1,7 @@
-// clients view of the state
-#[derive(Debug, Clone, Default)]
+/// comprehensive summary of the state of the daemon
+use serde::{Deserialize, Serialize};
+
+#[derive(Default, Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct DaemonState {
     pub session_ids: Vec<u32>,
     pub active_session: Option<u32>,

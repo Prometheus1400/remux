@@ -2,6 +2,7 @@ use std::{collections::HashMap, vec};
 
 use bytes::Bytes;
 use handle_macro::Handle;
+use remux_core::states::DaemonState;
 use tokio::sync::mpsc;
 use tracing::Instrument;
 
@@ -65,6 +66,7 @@ pub struct SessionManager {
     clients: HashMap<u32, ClientConnectionHandle>,
     session_to_client_mapping: HashMap<u32, Vec<u32>>, // support multiple clients attached to same session
     client_to_session_mapping: HashMap<u32, u32>,      // one client can only attach to one session
+    daemon_state: DaemonState,
 }
 impl SessionManager {
     #[instrument]
@@ -84,6 +86,7 @@ impl SessionManager {
             clients: HashMap::new(),
             session_to_client_mapping: HashMap::new(),
             client_to_session_mapping: HashMap::new(),
+            daemon_state: DaemonState::default(),
         }
     }
 
@@ -152,30 +155,36 @@ impl SessionManager {
         session_id: u32,
         create_session: bool,
     ) -> Result<()> {
-        // session doesn't exist either send client error or create it
-        if !self.sessions.contains_key(&session_id) {
-            if create_session {
-                let new_session = Session::spawn(session_id, self.handle.clone()).unwrap();
-                self.sessions.insert(session_id, new_session);
-            } else {
-                client_handle.failed_attach_to_session(session_id).await?;
-            }
+        // session doesn't exist and client not trying to create it
+        if !self.sessions.contains_key(&session_id) && !create_session {
+            client_handle
+                .initial_attach_result(Err(Error::Custom("no such session".to_owned())))
+                .await?;
+            return Ok(());
         }
+
+        // session didn't exist
+        if !self.sessions.contains_key(&session_id) {
+            let new_session = Session::spawn(session_id, self.handle.clone()).unwrap();
+            self.sessions.insert(session_id, new_session);
+        }
+
         // session exists
         self.clients.insert(client_id, client_handle.clone());
         let clients = self.session_to_client_mapping.entry(session_id).or_insert(vec![]);
         clients.push(client_id);
-        for c in self.clients.values() {
-            c.new_session(session_id).await?;
-        }
+        // for c in self.clients.values() {
+        //     c.new_session(session_id).await?;
+        // }
         self.client_to_session_mapping.insert(client_id, session_id);
 
-        client_handle
-            .current_sessions(self.sessions.keys().copied().collect())
-            .await?;
+        // client_handle
+        //     .current_sessions(self.sessions.keys().copied().collect())
+        //     .await?;
         let session_handle = self.sessions.get_mut(&session_id).expect("session should exist here");
-        client_handle.success_attach_to_session(session_id).await?;
-        session_handle.user_connection().await
+        client_handle.initial_attach_result(Ok(self.daemon_state.clone())).await?;
+        Ok(())
+        // session_handle.user_connection().await
     }
     async fn handle_client_disconnect(&mut self, client_id: u32) -> Result<()> {
         let client_handle = self.clients.remove(&client_id);

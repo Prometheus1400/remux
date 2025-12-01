@@ -1,5 +1,4 @@
 use bytes::Bytes;
-use remux_core::messages::RequestMessage;
 use thiserror::Error;
 use tokio::sync::mpsc::error::SendError;
 
@@ -30,9 +29,9 @@ pub enum Error {
         source: std::io::Error,
     },
 
-    #[error("Error sending message {message}: {source}")]
+    #[error("Error sending message {message:?}: {source}")]
     SendRequestMessage {
-        message: RequestMessage,
+        message: String,
         source: remux_core::error::Error,
     },
 

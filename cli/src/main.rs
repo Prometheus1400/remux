@@ -12,13 +12,16 @@ use ratatui::crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use remux_core::{
     comm,
     daemon_utils::get_sock_path,
-    messages::{RequestMessage, ResponseBody, ResponseMessage},
+    messages::{
+        CliRequestMessage, RequestBuilder,
+        request::{self, Attach},
+    },
 };
 use tokio::net::UnixStream;
 
 use crate::{
     actors::Client,
-    args::{Args, Commands, SessionCommands},
+    args::{Args, Commands},
     error::{Error, Result},
     prelude::*,
 };
@@ -71,39 +74,52 @@ async fn connect() -> Result<UnixStream> {
         })
 }
 
-#[instrument(skip(stream))]
-async fn handle_session_command(mut stream: UnixStream, command: SessionCommands) -> Result<()> {
-    let req: RequestMessage = command.into();
-    let res: ResponseMessage = comm::send_and_recv(&mut stream, &req).await?;
-    match res.body {
-        ResponseBody::SessionsList { sessions } => {
-            println!("{sessions:?}");
-        }
-    }
-    Ok(())
-}
+// #[instrument(skip(stream))]
+// async fn handle_session_command(mut stream: UnixStream, command: SessionCommands) -> Result<()> {
+//     let req: Request = command.into();
+//     let res: Response = comm::send_and_recv(&mut stream, &req).await?;
+//     assert_eq!(res.status, ResponseStatus::Ok);
+//     match res.body {
+//         ResponseBody::SessionsList { sessions } => {
+//             println!("{sessions:?}");
+//         }
+//         _ => {}
+//     }
+//     Ok(())
+// }
 
+#[instrument]
 async fn run(command: Commands) -> Result<()> {
     let stream = connect().await?;
+    debug!("Running command: {:?}", command);
     match command {
-        a @ Commands::Attach { .. } => attach(stream, a.into()).await,
-        Commands::Session { action } => handle_session_command(stream, action).await,
+        Commands::Attach { session_id } => {
+            attach(
+                stream,
+                RequestBuilder::default()
+                    .body(request::Attach {
+                        session_id,
+                        create: true,
+                    })
+                    .build(),
+            )
+            .await
+        }
+        // Commands::Session { action } => handle_session_command(stream, action).await,
+        _ => todo!(),
     }
 }
 
-#[instrument(skip(stream, attach_message))]
-async fn attach(mut stream: UnixStream, attach_message: RequestMessage) -> Result<()> {
-    debug!("Sending attach request");
-    comm::write_message(&mut stream, &attach_message)
-        .await
-        .map_err(|source| Error::SendRequestMessage {
-            message: attach_message,
-            source,
-        })?;
-    debug!("Sent attach request successfully");
+#[instrument(skip(stream, attach_request))]
+async fn attach(mut stream: UnixStream, attach_request: CliRequestMessage<Attach>) -> Result<()> {
+    debug!("Sending attach request: {:?}", attach_request);
+    let res = comm::send_and_recv_message(&mut stream, &attach_request).await?;
+    debug!("Recieved attach response: {:?}", res);
+    debug!("Recieved initial daemon state: {:?}", res.initial_daemon_state);
+
     enable_raw_mode()?;
-    debug!("raw mode enabled");
-    if let Ok(task) = Client::spawn(stream) {
+    debug!("Enabled raw mode");
+    if let Ok(task) = Client::spawn(stream, res.initial_daemon_state) {
         match task.await {
             Ok(Err(e)) => {
                 error!("Error joining client task: {e}");

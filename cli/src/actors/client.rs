@@ -5,6 +5,7 @@ use handle_macro::Handle;
 use remux_core::{
     comm,
     events::{CliEvent, DaemonEvent},
+    states::DaemonState,
 };
 use tokio::{io::AsyncReadExt, net::UnixStream, sync::mpsc, time::interval};
 use tracing::{Instrument, debug};
@@ -13,7 +14,6 @@ use crate::{
     actors::ui::{UI, UIHandle},
     input_parser::{Action, InputParser, ParsedEvent},
     prelude::*,
-    states::daemon_state::DaemonState,
     utils::DisplayableVec,
 };
 
@@ -43,12 +43,12 @@ pub struct Client {
 }
 impl Client {
     #[instrument(skip(stream))]
-    pub fn spawn(stream: UnixStream) -> Result<CliTask> {
-        Client::new(stream)?.run()
+    pub fn spawn(stream: UnixStream, daemon_state: DaemonState) -> Result<CliTask> {
+        Client::new(stream, daemon_state)?.run()
     }
 
     #[instrument(skip(stream))]
-    fn new(stream: UnixStream) -> Result<Self> {
+    fn new(stream: UnixStream, daemon_state: DaemonState) -> Result<Self> {
         let (tx, rx) = mpsc::channel(100);
         let (ui_stdin_tx, ui_stdin_rx) = mpsc::channel(100);
         let handle = ClientHandle { tx };
@@ -59,8 +59,8 @@ impl Client {
             rx,
             ui_stdin_tx,
             ui_handle,
-            daemon_state: DaemonState::default(),
-            sync_daemon_state: false,
+            daemon_state,
+            sync_daemon_state: true,
             input_parser: InputParser::new(),
             client_state: ClientState::Normal,
         })
