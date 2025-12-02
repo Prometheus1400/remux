@@ -19,9 +19,10 @@ pub enum ClientConnectionEvent {
     FailedAttachToSession(u32),
     DetachFromSession(u32),
     SessionOutput(Bytes),
-    NewSession(u32),
-    CurrentSessions(Vec<u32>),
     Disconnect,
+
+    // client side state update events
+    NewSession(u32),
 
     // variants related to initialization phase
     InitialAttach(u32), // invoked directly by the daemon
@@ -125,12 +126,8 @@ impl ClientConnection {
                                     comm::send_event(&mut self.stream, DaemonEvent::Raw(bytes)).await.unwrap();
                                 }
                                 NewSession(session_id) => {
-                                    // trace!("Client: NewSession");
-                                    // comm::send_event(&mut self.stream, DaemonEvent::NewSession(session_id)).await.unwrap();
-                                }
-                                CurrentSessions(session_ids) => {
-                                    // trace!("Client: NewSession");
-                                    // comm::send_event(&mut self.stream, DaemonEvent::CurrentSessions(session_ids)).await.unwrap();
+                                    trace!("Client: NewSession");
+                                    comm::send_event(&mut self.stream, DaemonEvent::NewSession(session_id)).await.unwrap();
                                 }
                                 _ => {
                                     error!("Unhandled or invalid event '{:?}' for current state '{:?}'", event, self.state);

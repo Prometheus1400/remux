@@ -148,6 +148,18 @@ impl SessionManager {
         Ok(handle_clone)
     }
 
+    /// creates a new session and handles updating the state and notifying clients about the update
+    async fn create_session(&mut self, session_id: u32) -> Result<&SessionHandle> {
+        let new_session = Session::spawn(session_id, self.handle.clone())?;
+        self.sessions.insert(session_id, new_session);
+        let session_handle_ref = self.sessions.get(&session_id).unwrap();
+        self.daemon_state.add_session(session_id);
+        for c in self.clients.values() {
+            c.new_session(session_id).await?;
+        }
+        Ok(session_handle_ref)
+    }
+
     async fn handle_client_connect(
         &mut self,
         client_id: u32,
@@ -165,26 +177,25 @@ impl SessionManager {
 
         // session didn't exist
         if !self.sessions.contains_key(&session_id) {
-            let new_session = Session::spawn(session_id, self.handle.clone()).unwrap();
-            self.sessions.insert(session_id, new_session);
+            self.create_session(session_id).await?;
         }
 
         // session exists
-        self.clients.insert(client_id, client_handle.clone());
         let clients = self.session_to_client_mapping.entry(session_id).or_insert(vec![]);
+        for c in self.clients.values() {
+            c.new_session(session_id).await?;
+        }
+        self.clients.insert(client_id, client_handle.clone());
         clients.push(client_id);
-        // for c in self.clients.values() {
-        //     c.new_session(session_id).await?;
-        // }
         self.client_to_session_mapping.insert(client_id, session_id);
 
-        // client_handle
-        //     .current_sessions(self.sessions.keys().copied().collect())
-        //     .await?;
         let session_handle = self.sessions.get_mut(&session_id).expect("session should exist here");
-        client_handle.initial_attach_result(Ok(self.daemon_state.clone())).await?;
+        client_handle
+            .initial_attach_result(Ok(self.daemon_state.clone()))
+            .await?;
+        client_handle.success_attach_to_session(session_id).await?;
+        session_handle.redraw().await?;
         Ok(())
-        // session_handle.user_connection().await
     }
     async fn handle_client_disconnect(&mut self, client_id: u32) -> Result<()> {
         let client_handle = self.clients.remove(&client_id);

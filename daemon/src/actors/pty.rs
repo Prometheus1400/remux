@@ -42,13 +42,13 @@ pub struct Pty {
     rect: Rect,
 }
 impl Pty {
-    #[instrument(skip(pane_handle))]
+    #[instrument(skip(pane_handle, rect))]
     pub fn spawn(pane_handle: PaneHandle, rect: Rect) -> Result<PtyHandle> {
         let pty = Pty::new(pane_handle, rect);
         pty.run()
     }
 
-    #[instrument(skip(pane_handle))]
+    #[instrument(skip(pane_handle, rect))]
     fn new(pane_handle: PaneHandle, rect: Rect) -> Self {
         let (tx, rx) = mpsc::channel::<PtyEvent>(10);
         let (pty_tx, pty_rx) = mpsc::unbounded_channel::<Bytes>();
