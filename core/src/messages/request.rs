@@ -1,7 +1,10 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    messages::{response, traits::{Message, RequestBody}},
+    messages::{
+        response,
+        traits::{Message, RequestBody},
+    },
     rand,
 };
 
@@ -24,7 +27,7 @@ pub struct DaemonRequestMessage {
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
 #[serde(untagged)]
 pub enum DaemonRequestMessageBody {
-    Attach(Attach)
+    Attach(Attach),
 }
 impl Message for DaemonRequestMessage {}
 
