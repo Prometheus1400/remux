@@ -44,7 +44,7 @@ pub enum Error {
 #[derive(Error, Debug)]
 pub enum EventSendError {
     #[error("Client send error: {0}")]
-    Client(SendError<ClientConnectionEvent>),
+    Client(Box<SendError<ClientConnectionEvent>>),
     #[error("Session Manager send error: {0}")]
     SessionManager(SendError<SessionManagerEvent>),
     #[error("Session send error: {0}")]
@@ -59,7 +59,7 @@ pub enum EventSendError {
 
 impl From<SendError<ClientConnectionEvent>> for Error {
     fn from(e: SendError<ClientConnectionEvent>) -> Self {
-        Self::EventSend(EventSendError::Client(e))
+        Self::EventSend(EventSendError::Client(Box::new(e)))
     }
 }
 impl From<SendError<SessionManagerEvent>> for Error {

@@ -11,6 +11,7 @@ use crossterm::{
 };
 use handle_macro::Handle;
 use ratatui::{Terminal, prelude::CrosstermBackend};
+use remux_core::states::DaemonState;
 use tokio::{
     sync::{broadcast, mpsc},
     time::interval,
@@ -25,7 +26,7 @@ use crate::{
         lua::{Lua, LuaHandle},
     },
     prelude::*,
-    states::{daemon_state::DaemonState, status_line_state::StatusLineState},
+    states::status_line_state::StatusLineState,
     utils::DisplayableVec,
     widgets::{BasicSelector, FuzzySelector, Selector},
 };

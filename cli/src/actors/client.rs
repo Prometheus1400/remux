@@ -3,8 +3,9 @@ use std::time::Duration;
 use bytes::Bytes;
 use handle_macro::Handle;
 use remux_core::{
-    communication,
+    comm,
     events::{CliEvent, DaemonEvent},
+    states::DaemonState,
 };
 use tokio::{io::AsyncReadExt, net::UnixStream, sync::mpsc, time::interval};
 use tracing::{Instrument, debug};
@@ -13,7 +14,6 @@ use crate::{
     actors::ui::{UI, UIHandle},
     input_parser::{Action, InputParser, ParsedEvent},
     prelude::*,
-    states::daemon_state::DaemonState,
     utils::DisplayableVec,
 };
 
@@ -43,12 +43,12 @@ pub struct Client {
 }
 impl Client {
     #[instrument(skip(stream))]
-    pub fn spawn(stream: UnixStream) -> Result<CliTask> {
-        Client::new(stream)?.run()
+    pub fn spawn(stream: UnixStream, daemon_state: DaemonState) -> Result<CliTask> {
+        Client::new(stream, daemon_state)?.run()
     }
 
     #[instrument(skip(stream))]
-    fn new(stream: UnixStream) -> Result<Self> {
+    fn new(stream: UnixStream, daemon_state: DaemonState) -> Result<Self> {
         let (tx, rx) = mpsc::channel(100);
         let (ui_stdin_tx, ui_stdin_rx) = mpsc::channel(100);
         let handle = ClientHandle { tx };
@@ -59,8 +59,8 @@ impl Client {
             rx,
             ui_stdin_tx,
             ui_handle,
-            daemon_state: DaemonState::default(),
-            sync_daemon_state: false,
+            daemon_state,
+            sync_daemon_state: true,
             input_parser: InputParser::new(),
             client_state: ClientState::Normal,
         })
@@ -88,7 +88,7 @@ impl Client {
                                             if let Some(index) = index {
                                                 let selected_session = self.daemon_state.session_ids[index];
                                                 debug!("sending session selection: {selected_session}");
-                                                communication::send_event(&mut self.stream, CliEvent::SwitchSession(selected_session)).await.unwrap();
+                                                comm::send_event(&mut self.stream, CliEvent::SwitchSession(selected_session)).await.unwrap();
                                             }
                                             debug!("Returning to normal state");
                                             self.client_state = ClientState::Normal;
@@ -97,7 +97,7 @@ impl Client {
                                 }
                             }
                         },
-                        res = communication::recv_daemon_event(&mut self.stream) => {
+                        res = comm::recv_daemon_event(&mut self.stream) => {
                             match res {
                                 Ok(event) => {
                                     match event {
@@ -145,7 +145,7 @@ impl Client {
                                             for event in self.input_parser.process(&stdin_buf[..n]) {
                                                 match event {
                                                     ParsedEvent::DaemonAction(cli_event) => {
-                                                        communication::send_event(&mut self.stream, cli_event).await?;
+                                                        comm::send_event(&mut self.stream, cli_event).await?;
                                                     },
                                                     ParsedEvent::LocalAction(local_action) => {
                                                         match local_action {
