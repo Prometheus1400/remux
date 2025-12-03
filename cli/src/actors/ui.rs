@@ -26,7 +26,7 @@ use crate::{
         lua::{Lua, LuaHandle},
     },
     prelude::*,
-    states::{status_line_state::StatusLineState},
+    states::status_line_state::StatusLineState,
     utils::DisplayableVec,
     widgets::{BasicSelector, FuzzySelector, Selector},
 };

@@ -20,8 +20,7 @@ pub enum Error {
 #[derive(Error, Debug)]
 pub enum ResponseError {
     #[error("UnexpectedId: expected({expected}) actual({actual})")]
-    UnexpectedId{expected:u32, actual:u32},
+    UnexpectedId { expected: u32, actual: u32 },
     #[error("Bad Status: {0}")]
-    Status(String)
+    Status(String),
 }
-

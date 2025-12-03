@@ -1,5 +1,5 @@
 use clap::{Parser, Subcommand};
-use remux_core::messages::{RequestBody, RequestBuilder, CliRequestMessage, request};
+use remux_core::messages::{CliRequestMessage, RequestBody, RequestBuilder, request};
 
 #[derive(Parser, Debug)]
 pub struct Args {

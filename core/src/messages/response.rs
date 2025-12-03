@@ -20,9 +20,8 @@ pub enum ResponseResult<T> {
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 pub struct Attach {
-    pub initial_daemon_state: DaemonState
+    pub initial_daemon_state: DaemonState,
 }
-
 
 // --------- builder ---------  //
 
@@ -53,7 +52,7 @@ impl<T> ResponseBuilder<ResultSet<T>> {
     pub fn build(self) -> ResponseMessage<T> {
         ResponseMessage {
             id: self.id,
-            result: self.result
+            result: self.result,
         }
     }
 }

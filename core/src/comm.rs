@@ -117,8 +117,8 @@ mod test {
         };
 
         let attach_response = response::Attach {
-                initial_daemon_state: DaemonState::default(),
-            };
+            initial_daemon_state: DaemonState::default(),
+        };
         let res = ResponseBuilder::default()
             .result(ResponseResult::Success(attach_response.clone()))
             .build();
