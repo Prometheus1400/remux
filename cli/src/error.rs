@@ -2,7 +2,7 @@ use bytes::Bytes;
 use thiserror::Error;
 use tokio::sync::mpsc::error::SendError;
 
-use crate::actors::{client::ClientEvent, lua::LuaEvent, ui::UIEvent};
+// use crate::actors::{client::ClientEvent, lua::LuaEvent, ui::UIEvent};
 
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -37,12 +37,11 @@ pub enum Error {
 
     #[error("Lua error: {0}")]
     Lua(String),
+    // #[error("Event Send Error: {0}")]
+    // EventSend(EventSendError),
 
-    #[error("Event Send Error: {0}")]
-    EventSend(EventSendError),
-
-    #[error("Sync Send Error: {0}")]
-    SyncSend(#[from] std::sync::mpsc::SendError<LuaEvent>),
+    // #[error("Sync Send Error: {0}")]
+    // SyncSend(#[from] std::sync::mpsc::SendError<LuaEvent>),
 }
 
 impl From<mlua::Error> for Error {
@@ -51,42 +50,42 @@ impl From<mlua::Error> for Error {
     }
 }
 
-#[derive(Error, Debug)]
-pub enum EventSendError {
-    #[error("IO send error: {0}")]
-    IO(SendError<ClientEvent>),
-    #[error("UI send error: {0}")]
-    UI(SendError<UIEvent>),
-    #[error("Bytes send error: {0}")]
-    Bytes(SendError<Bytes>),
-    // #[error("WidgetRunner send error: {0}")]
-    // WidgetRunner(SendError<WidgetRunnerEvent>),
-    // #[error("LuaActor send error: {0}")]
-    // LuaActor(SendError<LuaActorEvent>),
-}
-
-impl From<SendError<ClientEvent>> for Error {
-    fn from(e: SendError<ClientEvent>) -> Self {
-        Self::EventSend(EventSendError::IO(e))
-    }
-}
-impl From<SendError<UIEvent>> for Error {
-    fn from(e: SendError<UIEvent>) -> Self {
-        Self::EventSend(EventSendError::UI(e))
-    }
-}
-impl From<SendError<Bytes>> for Error {
-    fn from(e: SendError<Bytes>) -> Self {
-        Self::EventSend(EventSendError::Bytes(e))
-    }
-}
-// impl From<SendError<WidgetRunnerEvent>> for Error {
-//     fn from(e: SendError<WidgetRunnerEvent>) -> Self {
-//         Self::EventSend(EventSendError::WidgetRunner(e))
+// #[derive(Error, Debug)]
+// pub enum EventSendError {
+//     #[error("IO send error: {0}")]
+//     IO(SendError<ClientEvent>),
+//     #[error("UI send error: {0}")]
+//     UI(SendError<UIEvent>),
+//     #[error("Bytes send error: {0}")]
+//     Bytes(SendError<Bytes>),
+//     // #[error("WidgetRunner send error: {0}")]
+//     // WidgetRunner(SendError<WidgetRunnerEvent>),
+//     // #[error("LuaActor send error: {0}")]
+//     // LuaActor(SendError<LuaActorEvent>),
+// }
+//
+// impl From<SendError<ClientEvent>> for Error {
+//     fn from(e: SendError<ClientEvent>) -> Self {
+//         Self::EventSend(EventSendError::IO(e))
 //     }
 // }
-// impl From<SendError<LuaActorEvent>> for Error {
-//     fn from(e: SendError<LuaActorEvent>) -> Self {
-//         Self::EventSend(EventSendError::LuaActor(e))
+// impl From<SendError<UIEvent>> for Error {
+//     fn from(e: SendError<UIEvent>) -> Self {
+//         Self::EventSend(EventSendError::UI(e))
 //     }
 // }
+// impl From<SendError<Bytes>> for Error {
+//     fn from(e: SendError<Bytes>) -> Self {
+//         Self::EventSend(EventSendError::Bytes(e))
+//     }
+// }
+// // impl From<SendError<WidgetRunnerEvent>> for Error {
+// //     fn from(e: SendError<WidgetRunnerEvent>) -> Self {
+// //         Self::EventSend(EventSendError::WidgetRunner(e))
+// //     }
+// // }
+// // impl From<SendError<LuaActorEvent>> for Error {
+// //     fn from(e: SendError<LuaActorEvent>) -> Self {
+// //         Self::EventSend(EventSendError::LuaActor(e))
+// //     }
+// // }

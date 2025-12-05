@@ -1,3 +1,36 @@
+// // use bytes::Bytes;
+// // use ratatui::layout::Rect;
+// // use tui_term::widget::PseudoTerminal;
+// // use vt100::Parser;
+// //
+// // use crate::widgets::traits::Renderable;
+// //
+// // #[derive(Default)]
+// // pub struct TerminalWidget {
+// //     emulator: Parser,
+// // }
+// //
+// // impl TerminalWidget {
+// //     pub fn write(&mut self, bytes: Bytes) {
+// //         self.emulator.process(&bytes);
+// //     }
+// //
+// //     pub fn size(&self) -> (u16, u16) {
+// //         self.emulator.screen().size()
+// //     }
+// //
+// //     pub fn set_size(&mut self, rows: u16, cols: u16) {
+// //         self.emulator.set_size(rows, cols);
+// //     }
+// //
+// // }
+// //
+// // impl Renderable for TerminalWidget {
+// //     fn render(&self, f: &mut ratatui::Frame, rect: Rect) {
+// //         f.render_widget(PseudoTerminal::new(self.emulator.screen()), rect);
+// //     }
+// // }
+//
 // use std::time::Duration;
 //
 // use bytes::Bytes;
@@ -11,20 +44,19 @@
 // use tracing::{Instrument, debug};
 //
 // use crate::{
-//     actors::ui::{UI, UIHandle},
 //     input_parser::{Action, InputParser, ParsedEvent},
 //     prelude::*,
 //     utils::DisplayableVec,
 // };
 //
 // #[derive(Handle)]
-// pub enum ClientEvent {
+// pub enum TerminalWidgetEvent {
 //     Selected(Option<usize>), // index of the selected item
 // }
-// use ClientEvent::*;
+// use TerminalWidgetEvent::*;
 //
 // #[derive(Debug)]
-// enum ClientState {
+// enum ClientWidgetEvent {
 //     Normal,           // running normally with stdin parsed into events and sent to daemon
 //     SelectingSession, // means that the ui is currently busy selecting redirects stdin to ui selector
 // }
@@ -33,13 +65,13 @@
 // pub struct Client {
 //     _handle: ClientHandle,            // handle used to send the client events
 //     stream: UnixStream,               // the client owns the stream
-//     rx: mpsc::Receiver<ClientEvent>,  // receiver for client events
+//     rx: mpsc::Receiver<TerminalWidgetEvent>,  // receiver for client events
 //     daemon_state: DaemonState,        // determines if currently accepting events from daemon
 //     sync_daemon_state: bool,          // if the state is dirty only then do we need to sync to the ui
 //     ui_stdin_tx: mpsc::Sender<Bytes>, // this is for popup actor to connect to stdin
 //     ui_handle: UIHandle,              // how the client sends messages to ui
 //     input_parser: InputParser,        // converts streams of bytes into actionable events
-//     client_state: ClientState,        // the current state of the client
+//     client_state: ClientWidgetEvent,        // the current state of the client
 // }
 // impl Client {
 //     #[instrument(skip(stream))]
@@ -62,7 +94,7 @@
 //             daemon_state,
 //             sync_daemon_state: true,
 //             input_parser: InputParser::new(),
-//             client_state: ClientState::Normal,
+//             client_state: ClientWidgetEvent::Normal,
 //         })
 //     }
 //
@@ -81,17 +113,17 @@
 //                                 Selected(index) => {
 //                                     debug!("Selected: {index:?}");
 //                                     match self.client_state {
-//                                         ClientState::Normal => {
+//                                         ClientWidgetEvent::Normal => {
 //                                             error!("should not receive selected event in normal state");
 //                                         },
-//                                         ClientState::SelectingSession => {
+//                                         ClientWidgetEvent::SelectingSession => {
 //                                             if let Some(index) = index {
 //                                                 let selected_session = self.daemon_state.session_ids[index];
 //                                                 debug!("sending session selection: {selected_session}");
 //                                                 comm::send_event(&mut self.stream, CliEvent::SwitchSession(selected_session)).await.unwrap();
 //                                             }
 //                                             debug!("Returning to normal state");
-//                                             self.client_state = ClientState::Normal;
+//                                             self.client_state = ClientWidgetEvent::Normal;
 //                                         }
 //                                     }
 //                                 }
@@ -140,7 +172,7 @@
 //                             match stdin_res {
 //                                 Ok(n) if n > 0 => {
 //                                     match self.client_state {
-//                                         ClientState::Normal => {
+//                                         ClientWidgetEvent::Normal => {
 //                                             trace!("Sending {n} bytes to Daemon");
 //                                             for event in self.input_parser.process(&stdin_buf[..n]) {
 //                                                 match event {
@@ -150,7 +182,7 @@
 //                                                     ParsedEvent::LocalAction(local_action) => {
 //                                                         match local_action {
 //                                                             Action::SwitchSession => {
-//                                                                 self.client_state = ClientState::SelectingSession;
+//                                                                 self.client_state = ClientWidgetEvent::SelectingSession;
 //                                                                 let items = DisplayableVec::new(self.daemon_state.session_ids.clone());
 //                                                                 self.ui_handle.select_fuzzy(items, "Select Session".to_owned()).await.unwrap();
 //                                                             },
@@ -160,7 +192,7 @@
 //                                             }
 //
 //                                         },
-//                                         ClientState::SelectingSession => {
+//                                         ClientWidgetEvent::SelectingSession => {
 //                                             trace!("Sending {n} bytes to ui");
 //                                             self.ui_stdin_tx.send(Bytes::copy_from_slice(&stdin_buf[..n])).await?;
 //                                         },
@@ -190,3 +222,5 @@
 //         Ok(task)
 //     }
 // }
+//
+//

@@ -1,7 +1,8 @@
 use std::sync::{Arc, RwLock};
 
 use bytes::Bytes;
-use ratatui::Frame;
+use crossterm::event::Event;
+use ratatui::{Frame, layout::Rect};
 use tokio::sync::broadcast;
 
 use crate::{prelude::*, utils::DisplayableVec};
@@ -15,4 +16,10 @@ pub trait Selector {
     ) -> Result<()>;
 
     fn render(selector: &Arc<RwLock<Self>>, f: &mut Frame);
+}
+
+pub trait Component {
+    fn handle_event(&mut self, event: Option<Event>);
+
+    fn render(&mut self, f: &mut Frame, rect: Rect);
 }

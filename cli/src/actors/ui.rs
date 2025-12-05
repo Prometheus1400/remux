@@ -21,24 +21,25 @@ use tui_term::widget::PseudoTerminal;
 use vt100::Parser;
 
 use crate::{
-    actors::{
-        client::ClientHandle,
-        lua::{Lua, LuaHandle},
-    },
     prelude::*,
     states::status_line_state::StatusLineState,
     utils::DisplayableVec,
-    widgets::{BasicSelector, FuzzySelector, Selector},
+    widgets::{BasicSelector, FuzzySelector, Selector, TerminalWidget},
 };
+use crate::actors::{
+        client::ClientHandle, lua::{Lua, LuaHandle}
+    };
 
 #[derive(Handle)]
 pub enum UIEvent {
     Output(Bytes),
+    Stdin(Bytes),
     Kill,
     SyncDaemonState(DaemonState),
     SyncStatusLineState(StatusLineState),
     SelectBasic { items: DisplayableVec, title: String },
     SelectFuzzy { items: DisplayableVec, title: String },
+    SelectedIndex(Option<usize>),
 }
 use UIEvent::*;
 
@@ -51,7 +52,7 @@ enum UIState {
 
 pub struct UI {
     // for communication
-    handle: UIHandle,
+    _handle: UIHandle,
     rx: mpsc::Receiver<UIEvent>,
     // state for rendering
     daemon_state: DaemonState,
@@ -64,25 +65,28 @@ pub struct UI {
     fuzzy_selector: Arc<RwLock<FuzzySelector>>,
     selector_rx: mpsc::Receiver<Option<usize>>,
     stdin_rx: mpsc::Receiver<Bytes>,
+
+    terminal_widget: TerminalWidget
 }
 
 impl UI {
-    #[instrument(skip(client_handle, stdin_rx))]
-    pub fn spawn(client_handle: ClientHandle, stdin_rx: mpsc::Receiver<Bytes>) -> Result<UIHandle> {
-        Self::new(client_handle, stdin_rx)?.run()
-    }
-    #[instrument(skip(client_handle, stdin_rx))]
-    fn new(client_handle: ClientHandle, stdin_rx: mpsc::Receiver<Bytes>) -> Result<Self> {
+    #[instrument(skip())]
+    pub fn new() -> Result<Self> {
         let (tx, rx) = mpsc::channel(100);
-        let handle = UIHandle { tx };
+        let _handle = UIHandle { tx };
+
+        let client_handle = Client::spawn(, daemon_state);
+
         let parser = vt100::Parser::default();
         let lua_handle = Lua::spawn(handle.clone())?;
         let (selector_tx, selector_rx) = mpsc::channel(100);
+
         Ok(Self {
+            _handle,
+            rx,
+
             daemon_state: DaemonState::default(),
             status_line_state: StatusLineState::default(),
-            rx,
-            handle,
             parser,
             lua_handle,
             client_handle,
@@ -91,27 +95,32 @@ impl UI {
             fuzzy_selector: FuzzySelector::new(selector_tx.clone()),
             selector_rx,
             stdin_rx,
+            terminal_widget: TerminalWidget::default(),
         })
     }
     #[instrument(skip(self), fields(ui_state = ?self.ui_state))]
-    pub fn run(mut self) -> Result<UIHandle> {
+    pub async fn run(mut self) -> Result<()> {
         let span = tracing::Span::current();
-
-        let handle_clone = self.handle.clone();
         let mut term = Terminal::new(CrosstermBackend::new(stdout())).unwrap();
         let (selector_tx, _) = broadcast::channel(10000);
-        tokio::spawn({
-            let selector_tx = selector_tx.clone();
+        let selector_tx = selector_tx.clone();
+        let mut ticker = interval(Duration::from_millis(16));
+        execute!(stdout(), EnterAlternateScreen)?;
+        term.clear()?;
+        let task = tokio::spawn({
             async move {
-                let mut ticker = interval(Duration::from_millis(16));
-                execute!(stdout(), EnterAlternateScreen)?;
-                term.clear()?;
                 loop {
                     tokio::select! {
                         Some(event) = self.rx.recv() => {
                             match event {
                                 Output(bytes) => {
                                     self.parser.process(&bytes);
+                                }
+                                Stdin(bytes) if matches!(self.ui_state, UIState::SelectingFuzzy | UIState::SelectingBasic) => {
+                                    selector_tx.send(bytes).unwrap();
+                                }
+                                Stdin(_) => {
+                                    error!("Shouldn't recieve stdin in current state");
                                 }
                                 SyncDaemonState(daemon_state) => {
                                     self.lua_handle.sync_daemon_state(daemon_state.clone()).unwrap();
@@ -128,19 +137,15 @@ impl UI {
                                     self.ui_state = UIState::SelectingFuzzy;
                                     FuzzySelector::run(&self.fuzzy_selector, selector_tx.subscribe(), items, title).unwrap();
                                 }
+                                SelectedIndex(index) => {
+                                    self.client_handle.selected(index).await.unwrap();
+                                    self.ui_state = UIState::Normal;
+                                }
                                 Kill => {
                                     self.lua_handle.kill().unwrap();
                                     break;
                                 }
                             }
-                        }
-                        Some(bytes) = self.stdin_rx.recv(), if matches!(self.ui_state, UIState::SelectingFuzzy | UIState::SelectingBasic) => {
-                            selector_tx.send(bytes).unwrap();
-                        }
-                        Some(index) = self.selector_rx.recv() => {
-                            debug!("selected index({index:?})");
-                            self.client_handle.selected(index).await.unwrap();
-                            self.ui_state = UIState::Normal;
                         }
                         _ = ticker.tick() => {
                             let screen = self.parser.screen();
@@ -176,13 +181,11 @@ impl UI {
                         }
                     }
                 }
-                debug!("ui stopped");
-                execute!(stdout(), LeaveAlternateScreen)?;
-                Ok::<(), Error>(())
-            }
-            .instrument(span)
-        });
-
-        Ok(handle_clone)
+            debug!("ui stopped");
+            execute!(stdout(), LeaveAlternateScreen)?;
+            Ok::<(), Error>(())
+            }.instrument(span)
+        }).await;
+        Ok(())
     }
 }

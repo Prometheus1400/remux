@@ -1,6 +1,8 @@
 mod actors;
+pub mod app;
 mod args;
 mod error;
+mod input;
 mod input_parser;
 mod prelude;
 mod states;
@@ -20,7 +22,7 @@ use remux_core::{
 use tokio::net::UnixStream;
 
 use crate::{
-    actors::Client,
+    app::App,
     args::{Args, Commands},
     error::{Error, Result},
     prelude::*,
@@ -74,20 +76,6 @@ async fn connect() -> Result<UnixStream> {
         })
 }
 
-// #[instrument(skip(stream))]
-// async fn handle_session_command(mut stream: UnixStream, command: SessionCommands) -> Result<()> {
-//     let req: Request = command.into();
-//     let res: Response = comm::send_and_recv(&mut stream, &req).await?;
-//     assert_eq!(res.status, ResponseStatus::Ok);
-//     match res.body {
-//         ResponseBody::SessionsList { sessions } => {
-//             println!("{sessions:?}");
-//         }
-//         _ => {}
-//     }
-//     Ok(())
-// }
-
 #[instrument]
 async fn run(command: Commands) -> Result<()> {
     let stream = connect().await?;
@@ -105,7 +93,6 @@ async fn run(command: Commands) -> Result<()> {
             )
             .await
         }
-        // Commands::Session { action } => handle_session_command(stream, action).await,
         _ => todo!(),
     }
 }
@@ -117,20 +104,23 @@ async fn attach(mut stream: UnixStream, attach_request: CliRequestMessage<Attach
     debug!("Recieved attach response: {:?}", res);
     debug!("Recieved initial daemon state: {:?}", res.initial_daemon_state);
 
-    enable_raw_mode()?;
-    debug!("Enabled raw mode");
-    if let Ok(task) = Client::spawn(stream, res.initial_daemon_state) {
-        match task.await {
-            Ok(Err(e)) => {
-                error!("Error joining client task: {e}");
-            }
-            Err(e) => {
-                error!("Error joining client task: {e}");
-            }
-            _ => {}
-        }
-    }
-    disable_raw_mode()?;
-    debug!("Disabled raw mode");
-    Ok(())
+    let mut app = App::new(stream);
+    app.run().await
+
+    // enable_raw_mode()?;
+    // debug!("Enabled raw mode");
+    // if let Ok(task) = Client::spawn(stream, res.initial_daemon_state) {
+    //     match task.await {
+    //         Ok(Err(e)) => {
+    //             error!("Error joining client task: {e}");
+    //         }
+    //         Err(e) => {
+    //             error!("Error joining client task: {e}");
+    //         }
+    //         _ => {}
+    //     }
+    // }
+    // disable_raw_mode()?;
+    // debug!("Disabled raw mode");
+    // Ok(())
 }
