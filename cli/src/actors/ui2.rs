@@ -4,8 +4,9 @@ use ratatui::{
 };
 use tui_term::widget::PseudoTerminal;
 
-use crate::app::AppState;
+use crate::{app::AppState, prelude::*};
 
+#[instrument(skip(f))]
 pub fn draw(f: &mut Frame, state: &mut AppState) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -18,6 +19,7 @@ pub fn draw(f: &mut Frame, state: &mut AppState) {
     // render the normal terminal output
     let term_area = chunks[0];
     state.terminal.size = (term_area.height, term_area.width);
+    trace!("rendering terminal into rect: {term_area}");
     let term_ui = PseudoTerminal::new(state.terminal.emulator.screen());
     f.render_widget(term_ui, term_area);
 

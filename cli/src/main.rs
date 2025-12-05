@@ -104,7 +104,7 @@ async fn attach(mut stream: UnixStream, attach_request: CliRequestMessage<Attach
     debug!("Recieved attach response: {:?}", res);
     debug!("Recieved initial daemon state: {:?}", res.initial_daemon_state);
 
-    let mut app = App::new(stream);
+    let mut app = App::new(stream, res.initial_daemon_state);
     app.run().await
 
     // enable_raw_mode()?;

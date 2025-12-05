@@ -146,7 +146,7 @@ impl ClientConnection {
                                         },
                                         CliEvent::TerminalResize{rows, cols} => {
                                             trace!("Client Event Input: terminal resize(rows={rows}, cols={cols})");
-                                            todo!()
+                                            // todo!()
                                         },
                                         CliEvent::Detach => {
                                             trace!("Client Event Input: detach");

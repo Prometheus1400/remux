@@ -25,3 +25,4 @@ ratatui = { version = "0.29", features = ["crossterm"] }
 terminput = "0.5.11"
 tui-term = "0.2"
 fuzzy-matcher = "0.3.7"
+derivative = "2.2.0"

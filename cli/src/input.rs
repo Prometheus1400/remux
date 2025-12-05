@@ -23,7 +23,7 @@ pub fn start_input_listener(tx: mpsc::Sender<Input>) {
                 match stdin.read(&mut buf).await {
                     Ok(n) if n > 0 => {
                         trace!("read {} bytes from stdin", n);
-                        tx.send(Input::Stdin(Bytes::copy_from_slice(&buf))).await.unwrap();
+                        tx.send(Input::Stdin(Bytes::copy_from_slice(&buf[..n]))).await.unwrap();
                     }
                     Ok(_) => {
                         break;

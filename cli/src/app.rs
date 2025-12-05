@@ -1,10 +1,14 @@
+use core::panic;
 use std::{
+    fmt::Debug,
     io::{Stdout, stdin, stdout},
+    panic::set_hook,
     time::Duration,
 };
 
 use bytes::Bytes;
 use crossterm::{event::Event, execute};
+use derivative::Derivative;
 use ratatui::{Terminal, prelude::CrosstermBackend};
 use remux_core::{
     comm,
@@ -21,21 +25,28 @@ use crate::{
     prelude::*,
 };
 
+#[derive(Debug)]
 struct Ui {}
 
+#[derive(Debug)]
 pub struct StatusLineState {}
 
+#[derive(Debug)]
 pub enum UiState {
     Normal,
     Selecting,
 }
 
+#[derive(Derivative)]
+#[derivative(Debug)]
 pub struct TerminalState {
+    #[derivative(Debug = "ignore")]
     pub emulator: Parser,
     pub size: (u16, u16),
     pub needs_resize: bool,
 }
 
+#[derive(Debug)]
 pub struct AppState {
     pub terminal: TerminalState,
     pub daemon: DaemonState,
@@ -50,7 +61,7 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(stream: UnixStream) -> Self {
+    pub fn new(stream: UnixStream, daemon_state: DaemonState) -> Self {
         Self {
             stream,
             input_parser: InputParser::default(),
@@ -60,22 +71,27 @@ impl App {
                     size: (0, 0),
                     needs_resize: true,
                 },
-                daemon: DaemonState::default(),
+                daemon: daemon_state,
                 ui: UiState::Normal,
             },
             ui: Ui {},
         }
     }
 
+    #[instrument(skip(self))]
     pub async fn run(&mut self) -> Result<()> {
         debug!("starting app");
         let (tx, mut rx) = mpsc::channel::<Input>(100);
         input::start_input_listener(tx);
         let mut ticker = interval(Duration::from_millis(50));
         let mut term = ratatui::init();
+        set_hook(Box::new(|info| {
+            ratatui::restore();
+            eprintln!("Application crashed: {info}");
+        }));
+        // need an initial render since ui updates app state to convey terminal size information
+        term.draw(|f| ui2::draw(f, &mut self.state)).unwrap();
         loop {
-            // need an initial render since ui updates app state to convey terminal size information
-            term.draw(|f| ui2::draw(f, &mut self.state)).unwrap();
             if self.state.terminal.needs_resize {
                 let (rows, cols) = self.state.terminal.size;
                 debug!("setting terminal emulator size (rows={rows}, cols={cols})");
@@ -154,6 +170,7 @@ impl App {
         Ok(())
     }
 
+    #[instrument(skip(self, bytes))]
     async fn dispatch_stdin(&mut self, bytes: Bytes) {
         for parsed_event in self.input_parser.process(&bytes) {
             match parsed_event {
@@ -161,7 +178,8 @@ impl App {
                     todo!("update the application state")
                 }
                 input_parser::ParsedEvent::DaemonAction(cli_event) => {
-                    comm::send_event(&mut self.stream, cli_event).await;
+                    debug!("sending cli event: {cli_event:?}");
+                    comm::send_event(&mut self.stream, cli_event).await.unwrap();
                 }
             }
         }
