@@ -13,8 +13,8 @@ pub enum Input {
     Resize,
 }
 
-pub fn start_input_listener(tx: mpsc::Sender<Input>) {
-    tokio::spawn({
+pub fn start_input_listeners(tx: mpsc::Sender<Input>) -> Vec<CliTask> {
+    let task1: CliTask = tokio::spawn({
         let tx = tx.clone();
         async move {
             let mut stdin = tokio::io::stdin();
@@ -34,13 +34,17 @@ pub fn start_input_listener(tx: mpsc::Sender<Input>) {
                     }
                 }
             }
+            Ok(())
         }
     });
 
-    tokio::spawn(async move {
+    let task2: CliTask = tokio::spawn(async move {
         let mut sigwinch = signal(SignalKind::window_change()).unwrap();
         while sigwinch.recv().await.is_some() {
             tx.send(Input::Resize).await.unwrap();
         }
+        Ok(())
     });
+
+    vec![task1, task2]
 }

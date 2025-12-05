@@ -6,11 +6,14 @@ mod input;
 mod input_parser;
 mod prelude;
 mod states;
+mod ui;
 mod utils;
 mod widgets;
 
+use std::fs::File;
+
 use clap::Parser;
-use ratatui::crossterm::terminal::{disable_raw_mode, enable_raw_mode};
+use ratatui::crossterm::terminal::disable_raw_mode;
 use remux_core::{
     comm,
     daemon_utils::get_sock_path,
@@ -20,6 +23,7 @@ use remux_core::{
     },
 };
 use tokio::net::UnixStream;
+use tracing::field::debug;
 
 use crate::{
     app::App,
@@ -51,14 +55,12 @@ async fn main() {
 }
 
 fn setup_logging() -> Result<tracing_appender::non_blocking::WorkerGuard> {
-    use tracing_appender::{non_blocking, rolling};
+    use tracing_appender::non_blocking;
     use tracing_subscriber::{EnvFilter, fmt};
 
-    let file_appender = rolling::daily("logs", "remux-cli.log");
-    let (non_blocking, guard) = non_blocking(file_appender);
-
+    let file = File::create("./logs/remux-cli.log").unwrap();
+    let (non_blocking, guard) = non_blocking(file);
     let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("debug"));
-
     let subscriber = fmt().with_writer(non_blocking).with_env_filter(env_filter).finish();
     tracing::subscriber::set_global_default(subscriber)?;
     Ok(guard)
@@ -104,23 +106,9 @@ async fn attach(mut stream: UnixStream, attach_request: CliRequestMessage<Attach
     debug!("Recieved attach response: {:?}", res);
     debug!("Recieved initial daemon state: {:?}", res.initial_daemon_state);
 
+    debug!("Starting app");
     let mut app = App::new(stream, res.initial_daemon_state);
-    app.run().await
-
-    // enable_raw_mode()?;
-    // debug!("Enabled raw mode");
-    // if let Ok(task) = Client::spawn(stream, res.initial_daemon_state) {
-    //     match task.await {
-    //         Ok(Err(e)) => {
-    //             error!("Error joining client task: {e}");
-    //         }
-    //         Err(e) => {
-    //             error!("Error joining client task: {e}");
-    //         }
-    //         _ => {}
-    //     }
-    // }
-    // disable_raw_mode()?;
-    // debug!("Disabled raw mode");
-    // Ok(())
+    app.run().await?;
+    debug!("App terminated");
+    Ok(())
 }

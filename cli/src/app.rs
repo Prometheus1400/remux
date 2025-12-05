@@ -1,32 +1,35 @@
-use core::panic;
 use std::{
     fmt::Debug,
-    io::{Stdout, stdin, stdout},
-    panic::set_hook,
+    io::{Stdout, stdout},
     time::Duration,
 };
 
 use bytes::Bytes;
-use crossterm::{event::Event, execute};
+use crossterm::{
+    cursor::Show,
+    execute,
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, enable_raw_mode},
+};
 use derivative::Derivative;
-use ratatui::{Terminal, prelude::CrosstermBackend};
+use ratatui::{Terminal, crossterm::terminal::disable_raw_mode, prelude::CrosstermBackend, restore};
 use remux_core::{
     comm,
     events::{CliEvent, DaemonEvent},
     states::DaemonState,
 };
-use tokio::{net::UnixStream, sync::mpsc, time::interval};
+use tokio::{
+    net::UnixStream,
+    sync::{mpsc, watch},
+    time::interval,
+};
 use vt100::Parser;
 
 use crate::{
-    actors::ui2,
     input::{self, Input},
     input_parser::{self, InputParser},
     prelude::*,
+    ui,
 };
-
-#[derive(Debug)]
-struct Ui {}
 
 #[derive(Debug)]
 pub struct StatusLineState {}
@@ -56,8 +59,8 @@ pub struct AppState {
 pub struct App {
     pub state: AppState,
     input_parser: InputParser,
-    ui: Ui,
     stream: UnixStream,
+    bg_tasks: Vec<CliTask>,
 }
 
 impl App {
@@ -74,7 +77,7 @@ impl App {
                 daemon: daemon_state,
                 ui: UiState::Normal,
             },
-            ui: Ui {},
+            bg_tasks: Vec::new(),
         }
     }
 
@@ -82,21 +85,27 @@ impl App {
     pub async fn run(&mut self) -> Result<()> {
         debug!("starting app");
         let (tx, mut rx) = mpsc::channel::<Input>(100);
-        input::start_input_listener(tx);
+        self.bg_tasks.extend(input::start_input_listeners(tx));
         let mut ticker = interval(Duration::from_millis(50));
-        let mut term = ratatui::init();
-        set_hook(Box::new(|info| {
-            ratatui::restore();
-            eprintln!("Application crashed: {info}");
-        }));
+        let mut term = ratatui::Terminal::new(CrosstermBackend::new(stdout())).unwrap();
+        install_panic_hook();
+        enable_raw_mode()?;
+        debug!("Enabled raw mode");
+        execute!(stdout(), EnterAlternateScreen)?;
+        debug!("Entered alternate screen");
+
         // need an initial render since ui updates app state to convey terminal size information
-        term.draw(|f| ui2::draw(f, &mut self.state)).unwrap();
+        term.draw(|f| ui::draw(f, &mut self.state)).unwrap();
         loop {
             if self.state.terminal.needs_resize {
                 let (rows, cols) = self.state.terminal.size;
                 debug!("setting terminal emulator size (rows={rows}, cols={cols})");
                 self.state.terminal.emulator.set_size(rows, cols);
                 self.state.terminal.needs_resize = false;
+                let (rows, cols) = self.state.terminal.size;
+                comm::send_event(&mut self.stream, CliEvent::TerminalResize { rows, cols })
+                    .await
+                    .unwrap();
             }
             tokio::select! {
                 Some(input) = rx.recv() => {
@@ -108,15 +117,7 @@ impl App {
                         }
                         Resize => {
                             debug!("resize");
-                            self.state.terminal.needs_resize = true;
-                            term.draw(|f| {
-                                ui2::draw(f, &mut self.state);
-                            })
-                            .unwrap();
-                            let (rows, cols) = self.state.terminal.size;
-                            comm::send_event(&mut self.stream, CliEvent::TerminalResize { rows, cols })
-                                .await
-                                .unwrap();
+                            self.handle_resize(&mut term).await;
                         }
                     }
                 }
@@ -128,14 +129,13 @@ impl App {
                                     trace!("DaemonEvent(Raw({bytes:?}))");
                                     self.state.terminal.emulator.process(&bytes);
                                 }
+                                DaemonEvent::Disconnected => {
+                                    debug!("DaemonEvent(Disconnected)");
+                                    break;
+                                }
                                 _ => {
                                     // todo!();
                                 }
-                                // DaemonEvent::Disconnected => {
-                                //     debug!("DaemonEvent(Disconnected)");
-                                //     self.ui_handle.kill().await.unwrap();
-                                //     break;
-                                // }
                                 // DaemonEvent::CurrentSessions(session_ids) => {
                                 //     debug!("DaemonEvent(CurrentSessions({session_ids:?}))");
                                 //     self.daemon_state.set_sessions(session_ids);
@@ -163,10 +163,17 @@ impl App {
                     }
                 }
                 _ = ticker.tick() => {
-                    term.draw(|f| ui2::draw(f, &mut self.state)).unwrap();
+                    term.draw(|f| ui::draw(f, &mut self.state)).unwrap();
                 }
             }
         }
+        for task in self.bg_tasks.drain(..) {
+            task.abort();
+            let _ = task.await;
+        }
+        drop(term);
+        restore();
+        debug!("Restoring terminal");
         Ok(())
     }
 
@@ -184,4 +191,20 @@ impl App {
             }
         }
     }
+
+    #[instrument(skip(self, term))]
+    async fn handle_resize(&mut self, term: &mut Terminal<CrosstermBackend<Stdout>>) {
+        self.state.terminal.needs_resize = true;
+        term.draw(|f| {
+            ui::draw(f, &mut self.state);
+        })
+        .unwrap();
+    }
+}
+fn install_panic_hook() {
+    std::panic::set_hook(Box::new(|info| {
+        let _ = execute!(stdout(), LeaveAlternateScreen, Show);
+        let _ = disable_raw_mode();
+        eprintln!("{}", info);
+    }));
 }
