@@ -1,13 +1,16 @@
 use bytes::Bytes;
-use crossterm::event::{self, Event};
-use tokio::{io::AsyncReadExt, sync::mpsc};
+use tokio::{
+    io::AsyncReadExt,
+    signal::unix::{SignalKind, signal},
+    sync::mpsc,
+};
 
 use crate::prelude::*;
 
 #[derive(Debug)]
 pub enum Input {
     Stdin(Bytes),
-    Crossterm(Event),
+    Resize,
 }
 
 pub fn start_input_listener(tx: mpsc::Sender<Input>) {
@@ -19,6 +22,7 @@ pub fn start_input_listener(tx: mpsc::Sender<Input>) {
             loop {
                 match stdin.read(&mut buf).await {
                     Ok(n) if n > 0 => {
+                        trace!("read {} bytes from stdin", n);
                         tx.send(Input::Stdin(Bytes::copy_from_slice(&buf))).await.unwrap();
                     }
                     Ok(_) => {
@@ -34,11 +38,9 @@ pub fn start_input_listener(tx: mpsc::Sender<Input>) {
     });
 
     tokio::spawn(async move {
-        loop {
-            if event::poll(std::time::Duration::from_millis(100)).unwrap() {
-                let ev = event::read().unwrap();
-                tx.send(Input::Crossterm(ev)).await.ok();
-            }
+        let mut sigwinch = signal(SignalKind::window_change()).unwrap();
+        while sigwinch.recv().await.is_some() {
+            tx.send(Input::Resize).await.unwrap();
         }
     });
 }

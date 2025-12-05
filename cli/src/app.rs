@@ -1,7 +1,10 @@
-use std::{io::Stdout, time::Duration};
+use std::{
+    io::{Stdout, stdin, stdout},
+    time::Duration,
+};
 
 use bytes::Bytes;
-use crossterm::event::Event;
+use crossterm::{event::Event, execute};
 use ratatui::{Terminal, prelude::CrosstermBackend};
 use remux_core::{
     comm,
@@ -65,6 +68,7 @@ impl App {
     }
 
     pub async fn run(&mut self) -> Result<()> {
+        debug!("starting app");
         let (tx, mut rx) = mpsc::channel::<Input>(100);
         input::start_input_listener(tx);
         let mut ticker = interval(Duration::from_millis(50));
@@ -73,21 +77,30 @@ impl App {
             // need an initial render since ui updates app state to convey terminal size information
             term.draw(|f| ui2::draw(f, &mut self.state)).unwrap();
             if self.state.terminal.needs_resize {
-                self.state
-                    .terminal
-                    .emulator
-                    .set_size(self.state.terminal.size.0, self.state.terminal.size.1);
+                let (rows, cols) = self.state.terminal.size;
+                debug!("setting terminal emulator size (rows={rows}, cols={cols})");
+                self.state.terminal.emulator.set_size(rows, cols);
                 self.state.terminal.needs_resize = false;
             }
             tokio::select! {
                 Some(input) = rx.recv() => {
-                    use Input::{Stdin, Crossterm};
+                    use Input::{Stdin, Resize};
                     match input {
                         Stdin(bytes) => {
+                            trace!("stdin({bytes:?}");
                             self.dispatch_stdin(bytes).await;
                         }
-                        Crossterm(event) => {
-                            self.dispatch_crossterm(event, &mut term).await;
+                        Resize => {
+                            debug!("resize");
+                            self.state.terminal.needs_resize = true;
+                            term.draw(|f| {
+                                ui2::draw(f, &mut self.state);
+                            })
+                            .unwrap();
+                            let (rows, cols) = self.state.terminal.size;
+                            comm::send_event(&mut self.stream, CliEvent::TerminalResize { rows, cols })
+                                .await
+                                .unwrap();
                         }
                     }
                 }
@@ -100,7 +113,7 @@ impl App {
                                     self.state.terminal.emulator.process(&bytes);
                                 }
                                 _ => {
-                                    todo!();
+                                    // todo!();
                                 }
                                 // DaemonEvent::Disconnected => {
                                 //     debug!("DaemonEvent(Disconnected)");
@@ -150,31 +163,6 @@ impl App {
                 input_parser::ParsedEvent::DaemonAction(cli_event) => {
                     comm::send_event(&mut self.stream, cli_event).await;
                 }
-            }
-        }
-    }
-
-    async fn dispatch_crossterm(&mut self, event: Event, term: &mut Terminal<CrosstermBackend<Stdout>>) {
-        match event {
-            Event::FocusGained => todo!(),
-            Event::FocusLost => todo!(),
-            Event::Key(key_event) => match key_event {
-                _ => todo!(),
-            },
-            Event::Mouse(mouse_event) => match mouse_event {
-                _ => todo!(),
-            },
-            Event::Paste(_) => todo!(),
-            Event::Resize(_, _) => {
-                self.state.terminal.needs_resize = true;
-                term.draw(|f| {
-                    ui2::draw(f, &mut self.state);
-                })
-                .unwrap();
-                let (rows, cols) = self.state.terminal.size;
-                comm::send_event(&mut self.stream, CliEvent::TerminalResize { rows, cols })
-                    .await
-                    .unwrap();
             }
         }
     }

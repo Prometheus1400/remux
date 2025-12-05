@@ -10,6 +10,7 @@ remux-core = { path = "../core" }
 
 bytes.workspace = true
 crossterm.workspace = true
+futures-util.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
