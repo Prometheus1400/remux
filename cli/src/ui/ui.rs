@@ -4,7 +4,14 @@ use ratatui::{
 };
 use tui_term::widget::PseudoTerminal;
 
-use crate::{app::AppState, prelude::*};
+use crate::{
+    app::{AppMode, AppState},
+    prelude::*,
+    ui::{
+        basic_selector_widget::BasicSelectorWidget, fuzzy_selector_widget::FuzzySelectorWidget,
+        status_line_widget::StatusLineWidget,
+    },
+};
 
 #[instrument(skip(f))]
 pub fn draw(f: &mut Frame, state: &mut AppState) {
@@ -24,14 +31,19 @@ pub fn draw(f: &mut Frame, state: &mut AppState) {
     f.render_widget(term_ui, term_area);
 
     // render the status bar
-    // let status_line = StatusLine::new(app.status_line);
-    // f.render_widget();
+    let status_line = StatusLineWidget::new(state.ui.status_line.clone());
+    f.render_widget(status_line, chunks[1]);
 
-    // render selector if active
-    // if self.ui_state == UIState::SelectingBasic {
-    //     BasicSelector::render(&self.basic_selector, f);
-    // }
-    // if self.ui_state == UIState::SelectingFuzzy {
-    //     FuzzySelector::render(&self.fuzzy_selector, f);
-    // }
+    if let AppMode::SelectingSession = state.mode {
+        match state.ui.selector.selector_type {
+            crate::app::SelectorType::Basic => {
+                let popup = BasicSelectorWidget::default();
+                f.render_stateful_widget(popup, f.area(), &mut state.ui.selector);
+            }
+            crate::app::SelectorType::Fuzzy => {
+                let popup = FuzzySelectorWidget::default();
+                f.render_stateful_widget(popup, f.area(), &mut state.ui.selector);
+            }
+        }
+    }
 }

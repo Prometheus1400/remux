@@ -20,7 +20,7 @@ tracing.workspace = true
 vt100.workspace = true
 
 clap = { version = "4.5.51", features = ["derive"] }
-mlua = { version = "0.11.4", features = ["lua54", "serde", "async", "vendored"] }
+mlua = { version = "0.11.4", features = ["lua54", "serde", "async", "vendored", "send"] }
 ratatui = { version = "0.29", features = ["crossterm"] }
 terminput = "0.5.11"
 tui-term = "0.2"

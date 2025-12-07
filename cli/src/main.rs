@@ -1,14 +1,11 @@
-mod actors;
-pub mod app;
+mod app;
 mod args;
 mod error;
-mod input;
 mod input_parser;
 mod prelude;
 mod states;
+mod tasks;
 mod ui;
-mod utils;
-mod widgets;
 
 use std::fs::File;
 
@@ -23,7 +20,6 @@ use remux_core::{
     },
 };
 use tokio::net::UnixStream;
-use tracing::field::debug;
 
 use crate::{
     app::App,
@@ -110,5 +106,6 @@ async fn attach(mut stream: UnixStream, attach_request: CliRequestMessage<Attach
     let mut app = App::new(stream, res.initial_daemon_state);
     app.run().await?;
     debug!("App terminated");
+    disable_raw_mode()?;
     Ok(())
 }

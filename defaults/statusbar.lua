@@ -1,7 +1,7 @@
 ui.status_line = {
 	sections = {
 		a = {
-			get_active_session(),
+			"active-session"
 		},
 		b = {
 			function()
