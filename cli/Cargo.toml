@@ -10,6 +10,7 @@ remux-core = { path = "../core" }
 
 bytes.workspace = true
 crossterm.workspace = true
+futures-util.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
@@ -19,8 +20,9 @@ tracing.workspace = true
 vt100.workspace = true
 
 clap = { version = "4.5.51", features = ["derive"] }
-mlua = { version = "0.11.4", features = ["lua54", "serde", "async", "vendored"] }
+mlua = { version = "0.11.4", features = ["lua54", "serde", "async", "vendored", "send"] }
 ratatui = { version = "0.29", features = ["crossterm"] }
 terminput = "0.5.11"
 tui-term = "0.2"
 fuzzy-matcher = "0.3.7"
+derivative = "2.2.0"

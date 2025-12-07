@@ -144,8 +144,12 @@ impl ClientConnection {
                                             trace!("Client Event Input: raw({bytes:?})");
                                             self.session_manager_handle.user_input(self.id, bytes).await.unwrap();
                                         },
+                                        CliEvent::TerminalResize{rows, cols} => {
+                                            debug!("Client Event Input: terminal resize(rows={rows}, cols={cols})");
+                                            // todo!()
+                                        },
                                         CliEvent::Detach => {
-                                            trace!("Client Event Input: detach");
+                                            debug!("Client Event Input: detach");
                                             self.session_manager_handle.client_disconnect(self.id).await.unwrap();
                                         },
                                         CliEvent::KillPane => {

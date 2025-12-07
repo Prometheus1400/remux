@@ -17,16 +17,12 @@ const S: u8 = 0x73;
 const X: u8 = 0x78;
 const D: u8 = 0x64;
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct InputParser {
     buf: Vec<u8>,
 }
 
 impl InputParser {
-    pub fn new() -> Self {
-        Self { buf: vec![] }
-    }
-
     pub fn process(&mut self, input: &[u8]) -> Vec<ParsedEvent> {
         use ParsedEvent::{DaemonAction, LocalAction};
         self.buf.extend(input);
