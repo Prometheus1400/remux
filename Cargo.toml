@@ -13,9 +13,9 @@ itertools = { version = "0.14" }
 futures-util = { version = "0.3" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0.145" }
-thiserror = { version = "2.0.17" }
 tokio = { version = "1.48", features = ["full"] }
 tracing = { version = "0.1" }
 tracing-appender = { version = "0.2" }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 vt100 = { version = "0" }
+color-eyre = { version = "0.6" }

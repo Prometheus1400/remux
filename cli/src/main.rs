@@ -1,6 +1,5 @@
 mod app;
 mod args;
-mod error;
 mod input_parser;
 mod prelude;
 mod states;
@@ -24,14 +23,13 @@ use tokio::net::UnixStream;
 use crate::{
     app::App,
     args::{Args, Commands},
-    error::{Error, Result},
     prelude::*,
 };
 
 #[tokio::main]
 async fn main() {
+    color_eyre::install().unwrap();
     let cli = Args::parse();
-
     match setup_logging() {
         Ok(_guard) => {
             if let Err(e) = run(cli.command).await {
@@ -54,7 +52,7 @@ fn setup_logging() -> Result<tracing_appender::non_blocking::WorkerGuard> {
     use tracing_appender::non_blocking;
     use tracing_subscriber::{EnvFilter, fmt};
 
-    let file = File::create("./logs/remux-cli.log").unwrap();
+    let file = File::create("./logs/remux-cli.log")?;
     let (non_blocking, guard) = non_blocking(file);
     let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("debug"));
     let subscriber = fmt().with_writer(non_blocking).with_env_filter(env_filter).finish();
@@ -66,12 +64,8 @@ fn setup_logging() -> Result<tracing_appender::non_blocking::WorkerGuard> {
 async fn connect() -> Result<UnixStream> {
     let socket_path = get_sock_path()?;
     debug!("Connecting to {:?}", socket_path);
-    UnixStream::connect(socket_path.clone())
-        .await
-        .map_err(|source| Error::ConnectingSocket {
-            socket_path: socket_path.to_string_lossy().into_owned(),
-            source,
-        })
+    let stream = UnixStream::connect(socket_path.clone()).await?;
+    Ok(stream)
 }
 
 #[instrument]

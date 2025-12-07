@@ -8,7 +8,6 @@ use crate::{
         session_manager::SessionManagerHandle,
         window::{Window, WindowHandle},
     },
-    error::Result,
     layout::SplitDirection,
     prelude::*,
 };

@@ -1,7 +1,6 @@
 mod actors;
 mod control_signals;
 mod daemon;
-mod error;
 mod layout;
 mod prelude;
 
@@ -12,6 +11,7 @@ use crate::prelude::*;
 
 #[tokio::main]
 async fn main() {
+    color_eyre::install().unwrap();
     if let Err(e) = setup_logging() {
         eprintln!("{e}");
         std::process::exit(1);

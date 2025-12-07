@@ -12,12 +12,12 @@ bytes.workspace = true
 crossterm.workspace = true
 futures-util.workspace = true
 serde.workspace = true
-thiserror.workspace = true
 tokio.workspace = true
 tracing-appender.workspace = true
 tracing-subscriber.workspace = true
 tracing.workspace = true
 vt100.workspace = true
+color-eyre.workspace = true
 
 clap = { version = "4.5.51", features = ["derive"] }
 mlua = { version = "0.11.4", features = ["lua54", "serde", "async", "vendored", "send"] }

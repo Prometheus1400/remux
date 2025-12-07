@@ -4,6 +4,7 @@ use std::{
 };
 
 use bytes::Bytes;
+use color_eyre::eyre;
 use handle_macro::Handle;
 use nix::{
     errno::Errno,
@@ -111,8 +112,8 @@ impl Pty {
                                                     Ok(_) => trace!("wrote 0 bytes to pty"),
                                                     Err(e) => error!("error writing to pty: {}", e),
                                                 };
-                                                Ok(())
-                                            }).map_err(|_e| Error::Custom("failed to write to master fd".to_owned()))?;
+                                                std::result::Result::Ok(())
+                                            });
                                         },
                                         None => {
                                             // None means sender closed the channel - and we need to
@@ -174,9 +175,8 @@ impl Pty {
     }
 
     fn handle_input(&mut self, bytes: Bytes) -> Result<()> {
-        self.pty_tx
-            .send(bytes)
-            .map_err(|_| Error::Custom("error sending to pty_tx".to_owned()))
+        self.pty_tx.send(bytes)?;
+        Ok(())
     }
 
     fn handle_kill(child: Pid) -> Result<()> {
@@ -207,11 +207,11 @@ fn set_fd_nonblocking(owned_fd: &OwnedFd) -> Result<()> {
     let fd = owned_fd.as_raw_fd();
     let flags = unsafe { fcntl(fd, F_GETFL) };
     if flags < 0 {
-        return Err(Error::Custom("flag error".into()));
+        return Err(eyre::eyre!("flag error"));
     }
     let res = unsafe { fcntl(fd, F_SETFL, flags | O_NONBLOCK) };
     if res < 0 {
-        Err(Error::Custom("fcntl error".into()))
+        Err(eyre::eyre!("fcntl error"))
     } else {
         Ok(())
     }

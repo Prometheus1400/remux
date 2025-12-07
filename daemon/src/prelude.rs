@@ -2,5 +2,6 @@
 use tokio::task::JoinHandle;
 pub use tracing::{debug, error, info, instrument, trace, warn};
 
-pub use crate::error::{Error, Result};
-pub type DaemonTask = JoinHandle<std::result::Result<(), Error>>;
+pub type DaemonTask = JoinHandle<std::result::Result<(), color_eyre::eyre::Error>>;
+
+pub use color_eyre::eyre::{Error, Result};

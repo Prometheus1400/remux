@@ -72,7 +72,7 @@ impl ClientConnection {
         }
     }
     #[instrument(skip(self), fields(client_id = self.id))]
-    fn run(mut self, initial_session_id: u32) -> crate::error::Result<ClientConnectionHandle> {
+    fn run(mut self, initial_session_id: u32) -> Result<ClientConnectionHandle> {
         let span = tracing::Span::current();
         let handle_clone = self.handle.clone();
 
@@ -99,11 +99,6 @@ impl ClientConnection {
                                         }
                                     }
                                 }
-                                // AttachToSession(session_id) => {
-                                //     debug!("Client: AttachToSession");
-                                //     self.session_manager_handle.client_connect(self.id, handle.clone(), session_id, true).await.unwrap();
-                                //     self.state = ClientConnectionState::Attaching;
-                                // }
                                 SuccessAttachToSession(session_id) => {
                                     debug!("Client: SuccessAttachToSession");
                                     self.state = ClientConnectionState::Attached;

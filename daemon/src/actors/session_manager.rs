@@ -1,6 +1,7 @@
 use std::{collections::HashMap, vec};
 
 use bytes::Bytes;
+use color_eyre::eyre;
 use handle_macro::Handle;
 use remux_core::states::DaemonState;
 use tokio::sync::mpsc;
@@ -11,7 +12,6 @@ use crate::{
         client_connection::ClientConnectionHandle,
         session::{Session, SessionHandle},
     },
-    error::Result,
     layout::SplitDirection,
     prelude::*,
 };
@@ -91,7 +91,7 @@ impl SessionManager {
     }
 
     #[instrument(skip(self))]
-    fn run(mut self) -> crate::error::Result<SessionManagerHandle> {
+    fn run(mut self) -> Result<SessionManagerHandle> {
         let span = tracing::Span::current();
         let handle_clone = self.handle.clone();
         let _task = tokio::spawn({
@@ -170,7 +170,7 @@ impl SessionManager {
         // session doesn't exist and client not trying to create it
         if !self.sessions.contains_key(&session_id) && !create_session {
             client_handle
-                .initial_attach_result(Err(Error::Custom("no such session".to_owned())))
+                .initial_attach_result(Err(eyre::eyre!("no such session")))
                 .await?;
             return Ok(());
         }
