@@ -11,7 +11,6 @@ use crate::{
         client_connection::ClientConnection,
         session_manager::{SessionManager, SessionManagerHandle},
     },
-    error::Result,
     prelude::*,
 };
 
@@ -24,7 +23,7 @@ impl RemuxDaemon {
     /// Makes sure there can only ever be once instance at the
     /// process level through use of OS level file locks
     pub fn new() -> Result<Self> {
-        let session_manager_handle = SessionManager::spawn().unwrap();
+        let session_manager_handle = SessionManager::spawn()?;
         Ok(Self {
             _daemon_file: lock_daemon_file()?,
             session_manager_handle,
@@ -60,8 +59,7 @@ async fn handle_message(session_manager_handle: SessionManagerHandle, mut stream
     match req.body {
         DaemonRequestMessageBody::Attach(request::Attach { session_id, create }) => {
             debug!("running new client actor");
-            let _client = ClientConnection::spawn(stream, session_manager_handle, session_id).unwrap();
-            // client.attach_to_session(session_id).await.unwrap();
+            let _client = ClientConnection::spawn(stream, session_manager_handle, session_id)?;
         }
     };
     Ok(())

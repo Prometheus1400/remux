@@ -253,7 +253,7 @@ impl Window {
         })
     }
     #[instrument(skip(self))]
-    fn run(mut self) -> crate::error::Result<WindowHandle> {
+    fn run(mut self) -> Result<WindowHandle> {
         let span = tracing::Span::current();
         let handle_clone = self.handle.clone();
         let _task = tokio::spawn({

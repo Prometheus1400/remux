@@ -137,7 +137,7 @@ impl App {
         debug!("Entered alternate screen");
 
         // need an initial render since ui updates app state to convey terminal size information
-        term.draw(|f| ui::draw(f, &mut self.state)).unwrap();
+        term.draw(|f| ui::draw(f, &mut self.state))?;
         loop {
             if self.state.terminal.needs_resize {
                 let (rows, cols) = self.state.terminal.size;
@@ -145,9 +145,7 @@ impl App {
                 self.state.terminal.emulator.set_size(rows, cols);
                 self.state.terminal.needs_resize = false;
                 let (rows, cols) = self.state.terminal.size;
-                comm::send_event(&mut self.stream, CliEvent::TerminalResize { rows, cols })
-                    .await
-                    .unwrap();
+                comm::send_event(&mut self.stream, CliEvent::TerminalResize { rows, cols }).await?;
             }
             tokio::select! {
                 Some(input) = input_rx.recv() => {
@@ -203,7 +201,7 @@ impl App {
                     }
                 }
                 _ = ticker.tick() => {
-                    term.draw(|f| ui::draw(f, &mut self.state)).unwrap();
+                    term.draw(|f| ui::draw(f, &mut self.state))?;
                 }
             }
         }
@@ -218,15 +216,19 @@ impl App {
     }
 
     #[instrument(skip(self, bytes))]
-    async fn dispatch_stdin(&mut self, bytes: Bytes) {
+    async fn dispatch_stdin(&mut self, bytes: Bytes) -> Result<()> {
         match self.state.mode {
-            AppMode::Normal => self.handle_stdin_for_normal_mode(bytes).await,
-            AppMode::SelectingSession => self.handle_stdin_for_selecting_mode(bytes).await,
+            AppMode::Normal => self.handle_stdin_for_normal_mode(bytes).await?,
+            AppMode::SelectingSession => self.handle_stdin_for_selecting_mode(bytes).await?,
         }
+
+        Ok(())
     }
 
-    async fn handle_stdin_for_selecting_mode(&mut self, bytes: Bytes) {
-        let event = Event::parse_from(&bytes).unwrap().unwrap();
+    async fn handle_stdin_for_selecting_mode(&mut self, bytes: Bytes) -> Result<()> {
+        let event = Event::parse_from(&bytes)?.unwrap();
+        panic!("hi");
+
         let selection_opt = match self.state.ui.selector.selector_type {
             SelectorType::Basic => BasicSelectorWidget::input(event, &mut self.state.ui.selector),
             SelectorType::Fuzzy => FuzzySelectorWidget::input(event, &mut self.state.ui.selector),
@@ -235,10 +237,8 @@ impl App {
             match selection {
                 ui::traits::Selection::Index(i) => match self.state.mode {
                     AppMode::SelectingSession => {
-                        let session = self.state.ui.selector.list[i].parse::<u32>().unwrap();
-                        comm::send_event(&mut self.stream, CliEvent::SwitchSession(session))
-                            .await
-                            .unwrap();
+                        let session = self.state.daemon.session_ids[i];
+                        comm::send_event(&mut self.stream, CliEvent::SwitchSession(session)).await?;
                     }
                     AppMode::Normal => {}
                 },
@@ -248,9 +248,10 @@ impl App {
             self.state.ui.selector.list_state.select(Some(0));
             self.state.ui.selector.list.clear();
         }
+        Ok(())
     }
 
-    async fn handle_stdin_for_normal_mode(&mut self, bytes: Bytes) {
+    async fn handle_stdin_for_normal_mode(&mut self, bytes: Bytes) -> Result<()> {
         for parsed_event in self.input_parser.process(&bytes) {
             match parsed_event {
                 input_parser::ParsedEvent::LocalAction(action) => {
@@ -258,10 +259,11 @@ impl App {
                 }
                 input_parser::ParsedEvent::DaemonAction(cli_event) => {
                     debug!("sending cli event: {cli_event:?}");
-                    comm::send_event(&mut self.stream, cli_event).await.unwrap();
+                    comm::send_event(&mut self.stream, cli_event).await?;
                 }
             }
         }
+        Ok(())
     }
 
     async fn dispatch_action(&mut self, action: input_parser::Action) {

@@ -102,8 +102,7 @@ impl SelectorStatefulWidget for FuzzySelectorWidget {
                     // Map the current filtered index to the original index
                     let original_index = selected_index
                         .and_then(|i| filtered_list.get(i))
-                        .map(|item| item.index)
-                        .unwrap();
+                        .map(|item| item.index)?;
 
                     Some(Selection::Index(original_index))
                 }

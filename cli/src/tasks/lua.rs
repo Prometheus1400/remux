@@ -1,5 +1,6 @@
 use std::{fs, time::Duration};
 
+use color_eyre::eyre;
 use mlua::Lua;
 use tokio::sync::broadcast;
 
@@ -23,10 +24,10 @@ fn initialize_lua_state(lua: &mut Lua) -> Result<()> {
     Ok(())
 }
 
-pub fn start_status_line_task(tx: broadcast::Sender<StatusLineState>) -> CliTask {
+pub fn start_status_line_task(tx: broadcast::Sender<StatusLineState>) -> Result<CliTask> {
     let mut lua = Lua::default();
-    initialize_lua_state(&mut lua).unwrap();
-    let code = fs::read_to_string("defaults/statusbar.lua").unwrap();
+    initialize_lua_state(&mut lua)?;
+    let code = fs::read_to_string("defaults/statusbar.lua")?;
 
     info!("Starting lua status line task");
     let task: CliTask = tokio::spawn({
@@ -84,9 +85,8 @@ pub fn start_status_line_task(tx: broadcast::Sender<StatusLineState>) -> CliTask
                 }
                 let _ = tx.send(status_line_state);
             }
-            // Ok::<(), Error>(())
         }
     });
 
-    task
+    eyre::Ok(task)
 }
