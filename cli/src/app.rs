@@ -1,6 +1,8 @@
 use std::{fmt::Debug, io::Stdout, time::Duration};
 
 use bytes::Bytes;
+use clap::FromArgMatches;
+use color_eyre::eyre;
 use derivative::Derivative;
 use ratatui::{Terminal, prelude::CrosstermBackend, restore, widgets::ListState};
 use remux_core::{
@@ -130,7 +132,7 @@ impl App {
         let (input_tx, mut input_rx) = mpsc::channel::<Input>(100);
         let (lua_tx, mut lua_rx) = broadcast::channel(100);
         self.bg_tasks.extend(input::start_input_listeners(input_tx));
-        self.bg_tasks.push(lua::start_status_line_task(lua_tx));
+        self.bg_tasks.push(lua::start_status_line_task(lua_tx)?);
         let mut ticker = interval(Duration::from_millis(50));
         debug!("Enabled raw mode");
         // execute!(stdout(), EnterAlternateScreen)?;
@@ -153,7 +155,7 @@ impl App {
                     match input {
                         Stdin(bytes) => {
                             trace!("stdin({bytes:?}");
-                            self.dispatch_stdin(bytes).await;
+                            self.dispatch_stdin(bytes).await.unwrap();
                         }
                         Resize => {
                             debug!("resize");
@@ -292,11 +294,12 @@ impl App {
     }
 
     #[instrument(skip(self, term))]
-    async fn handle_resize(&mut self, term: &mut Terminal<CrosstermBackend<Stdout>>) {
+    async fn handle_resize(&mut self, term: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
         self.state.terminal.needs_resize = true;
         term.draw(|f| {
             ui::draw(f, &mut self.state);
-        })
-        .unwrap();
+        })?;
+
+        eyre::Ok(())
     }
 }
