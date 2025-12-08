@@ -30,7 +30,7 @@ impl RemuxDaemon {
         })
     }
 
-    #[instrument(skip(self), name = "daemon")]
+    #[instrument(skip(self), name = "Daemon")]
     pub async fn listen(&self) -> Result<()> {
         let socket_path = get_sock_path()?;
 

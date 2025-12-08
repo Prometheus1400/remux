@@ -125,25 +125,22 @@ impl App {
         }
     }
 
-    #[instrument(skip(self))]
+    #[instrument(parent=None, skip(self), name="App")]
     pub async fn run(&mut self) -> Result<()> {
         let mut term = ratatui::init();
-        debug!("starting app");
+        debug!("Starting app");
         let (input_tx, mut input_rx) = mpsc::channel::<Input>(100);
         let (lua_tx, mut lua_rx) = broadcast::channel(100);
         self.bg_tasks.extend(input::start_input_listeners(input_tx));
         self.bg_tasks.push(lua::start_status_line_task(lua_tx)?);
         let mut ticker = interval(Duration::from_millis(50));
-        debug!("Enabled raw mode");
-        // execute!(stdout(), EnterAlternateScreen)?;
-        debug!("Entered alternate screen");
 
         // need an initial render since ui updates app state to convey terminal size information
         term.draw(|f| ui::draw(f, &mut self.state))?;
         loop {
             if self.state.terminal.needs_resize {
                 let (rows, cols) = self.state.terminal.size;
-                debug!("setting terminal emulator size (rows={rows}, cols={cols})");
+                info!(rows = rows, cols = cols, "Setting terminal emulator size");
                 self.state.terminal.emulator.set_size(rows, cols);
                 self.state.terminal.needs_resize = false;
                 let (rows, cols) = self.state.terminal.size;
@@ -151,53 +148,58 @@ impl App {
             }
             tokio::select! {
                 Some(input) = input_rx.recv() => {
+                    let span = error_span!("Recieved Input");
+                    let _guard = span.enter();
                     use Input::{Stdin, Resize};
-                    match input {
+                    match &input {
                         Stdin(bytes) => {
-                            trace!("stdin({bytes:?}");
-                            self.dispatch_stdin(bytes).await.unwrap();
+                            trace!(input=?input);
+                            self.dispatch_stdin(bytes.clone()).await.unwrap();
                         }
                         Resize => {
-                            debug!("resize");
-                            self.handle_resize(&mut term).await;
+                            info!(input=?input);
+                            self.handle_resize(&mut term).await.unwrap();
                         }
                     }
                 }
                 Ok(mut status_line_state) = lua_rx.recv() => {
-                    debug!("received status line state");
+                    trace!(status_line_state=?status_line_state, "received status line state");
                     status_line_state.apply_built_ins(&self.state);
                     self.state.ui.status_line = status_line_state;
                 }
                 res = comm::recv_daemon_event(&mut self.stream) => {
                     match res {
                         Ok(event) => {
+                            let span = error_span!("Recieved Daemon Event");
+                            let _guard = span.enter();
+                            match &event {
+                                DaemonEvent::Raw(..) => {
+                                    trace!(event=?event);
+                                }
+                                _ => {
+                                    info!(event=?event);
+                                }
+                            }
                             match event {
                                 DaemonEvent::Raw(bytes) => {
-                                    trace!("DaemonEvent(Raw({bytes:?}))");
                                     self.state.terminal.emulator.process(&bytes);
                                 }
                                 DaemonEvent::Disconnected => {
-                                    debug!("DaemonEvent(Disconnected)");
                                     break;
                                 }
                                 DaemonEvent::ActiveSession(session_id) => {
-                                    debug!("DaemonEvent(ActiveSession({session_id}))");
                                     self.state.daemon.set_active_session(session_id);
                                 }
                                 DaemonEvent::NewSession(session_id) => {
-                                    debug!("DaemonEvent(NewSession({session_id}))");
                                     self.state.daemon.add_session(session_id);
                                 }
                                 _ => {
                                     todo!();
                                 }
-                                // DaemonEvent::DeletedSession(_session_id) => {
-                                //     todo!("implement delete session");
-                                // }
                             }
                         }
                         Err(e) => {
-                            error!("Error receiving daemon event: {e}");
+                            error!(error=%e, "Error receiving daemon event");
                             break;
                         }
                     }
@@ -217,7 +219,6 @@ impl App {
         Ok(())
     }
 
-    #[instrument(skip(self, bytes))]
     async fn dispatch_stdin(&mut self, bytes: Bytes) -> Result<()> {
         match self.state.mode {
             AppMode::Normal => self.handle_stdin_for_normal_mode(bytes).await?,
@@ -229,7 +230,6 @@ impl App {
 
     async fn handle_stdin_for_selecting_mode(&mut self, bytes: Bytes) -> Result<()> {
         let event = Event::parse_from(&bytes)?.unwrap();
-        panic!("hi");
 
         let selection_opt = match self.state.ui.selector.selector_type {
             SelectorType::Basic => BasicSelectorWidget::input(event, &mut self.state.ui.selector),
@@ -260,7 +260,6 @@ impl App {
                     self.dispatch_action(action).await;
                 }
                 input_parser::ParsedEvent::DaemonAction(cli_event) => {
-                    debug!("sending cli event: {cli_event:?}");
                     comm::send_event(&mut self.stream, cli_event).await?;
                 }
             }

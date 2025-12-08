@@ -2,7 +2,6 @@ use ratatui::{
     layout::{Constraint, Direction, Layout},
     widgets::{Paragraph, Widget},
 };
-use tracing::info;
 
 use crate::states::status_line_state::StatusLineState;
 
@@ -22,9 +21,6 @@ impl Widget for StatusLineWidget {
             return;
         }
 
-        info!("rendering status line widget");
-
-        // 1. Create 3 horizontal constraints for Left, Center, Right sections
         let chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([

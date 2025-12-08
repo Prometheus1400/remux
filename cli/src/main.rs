@@ -50,20 +50,37 @@ async fn main() {
 
 fn setup_logging() -> Result<tracing_appender::non_blocking::WorkerGuard> {
     use tracing_appender::non_blocking;
-    use tracing_subscriber::{EnvFilter, fmt};
-
+    use tracing_error::ErrorLayer;
+    use tracing_subscriber::{EnvFilter, FmtSubscriber, fmt::format::FmtSpan, layer::SubscriberExt};
+    // Create the log file
     let file = File::create("./logs/remux-cli.log")?;
-    let (non_blocking, guard) = non_blocking(file);
-    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("debug"));
-    let subscriber = fmt().with_writer(non_blocking).with_env_filter(env_filter).finish();
+    let (non_blocking_writer, guard) = non_blocking(file);
+
+    // Environment filter
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("debug"));
+
+    // Build the subscriber
+    let subscriber = FmtSubscriber::builder()
+        .with_env_filter(filter)
+        .with_span_events(FmtSpan::NONE)
+        .with_line_number(false)
+        .with_file(false)
+        .with_target(false)
+        .with_level(true)
+        .with_thread_ids(false)
+        .with_writer(non_blocking_writer)
+        .finish()
+        .with(ErrorLayer::default());
+
     tracing::subscriber::set_global_default(subscriber)?;
+
     Ok(guard)
 }
 
 #[instrument]
 async fn connect() -> Result<UnixStream> {
     let socket_path = get_sock_path()?;
-    debug!("Connecting to {:?}", socket_path);
+    debug!(path=?socket_path, "Connecting to unix socket");
     let stream = UnixStream::connect(socket_path.clone()).await?;
     Ok(stream)
 }
@@ -71,7 +88,7 @@ async fn connect() -> Result<UnixStream> {
 #[instrument]
 async fn run(command: Commands) -> Result<()> {
     let stream = connect().await?;
-    debug!("Running command: {:?}", command);
+    debug!("Running command");
     match command {
         Commands::Attach { session_id } => {
             attach(
@@ -89,12 +106,12 @@ async fn run(command: Commands) -> Result<()> {
     }
 }
 
-#[instrument(skip(stream, attach_request))]
+#[instrument(skip(stream))]
 async fn attach(mut stream: UnixStream, attach_request: CliRequestMessage<Attach>) -> Result<()> {
-    debug!("Sending attach request: {:?}", attach_request);
+    debug!("Sending attach request");
     let res = comm::send_and_recv_message(&mut stream, &attach_request).await?;
-    debug!("Recieved attach response: {:?}", res);
-    debug!("Recieved initial daemon state: {:?}", res.initial_daemon_state);
+    debug!(response=?res, "Recieved attach response");
+    debug!(daemon_state=?res.initial_daemon_state, "Recieved initial daemon state");
 
     debug!("Starting app");
     let mut app = App::new(stream, res.initial_daemon_state);
