@@ -6,6 +6,7 @@ use handle_macro::Handle;
 use remux_core::states::DaemonState;
 use tokio::sync::mpsc;
 use tracing::Instrument;
+use uuid::Uuid;
 
 use crate::{
     actors::{
@@ -21,34 +22,34 @@ use crate::{
 pub enum SessionManagerEvent {
     // client -> session manager events
     ClientConnect {
-        client_id: u32,
+        client_id: Uuid,
         client_handle: ClientConnectionHandle,
         session_id: u32,
         create_session: bool,
     },
     ClientDisconnect {
-        client_id: u32,
+        client_id: Uuid,
     },
     ClientSwitchSession {
-        client_id: u32,
+        client_id: Uuid,
         session_id: u32,
     },
 
     // client -> session events
     UserInput {
-        client_id: u32,
+        client_id: Uuid,
         bytes: Bytes,
     },
     UserSplitPane {
-        client_id: u32,
+        client_id: Uuid,
         direction: SplitDirection,
     },
     UserIteratePane {
-        client_id: u32,
+        client_id: Uuid,
         is_next: bool,
     },
     UserKillPane {
-        client_id: u32,
+        client_id: Uuid,
     },
 
     // session -> client events
@@ -67,9 +68,9 @@ pub struct SessionManager {
     handle: SessionManagerHandle,
     rx: mpsc::Receiver<SessionManagerEvent>,
     sessions: HashMap<u32, SessionHandle>,
-    clients: HashMap<u32, ClientConnectionHandle>,
-    session_to_client_mapping: HashMap<u32, Vec<u32>>, // support multiple clients attached to same session
-    client_to_session_mapping: HashMap<u32, u32>,      // one client can only attach to one session
+    clients: HashMap<Uuid, ClientConnectionHandle>,
+    session_to_client_mapping: HashMap<u32, Vec<Uuid>>, // support multiple clients attached to same session
+    client_to_session_mapping: HashMap<Uuid, u32>,      // one client can only attach to one session
     daemon_state: DaemonState,
 }
 impl SessionManager {
@@ -100,7 +101,7 @@ impl SessionManager {
                 loop {
                     if let Some(event) = self.rx.recv().await {
                         match &event {
-                            SessionSendOutput { .. } => {
+                            SessionSendOutput { .. } | UserInput { .. } => {
                                 trace!(event=?event);
                             }
                             _ => {
@@ -168,7 +169,7 @@ impl SessionManager {
 
     async fn handle_client_connect(
         &mut self,
-        client_id: u32,
+        client_id: Uuid,
         client_handle: ClientConnectionHandle,
         session_id: u32,
         create_session: bool,
@@ -203,7 +204,7 @@ impl SessionManager {
         session_handle.redraw().await?;
         Ok(())
     }
-    async fn handle_client_disconnect(&mut self, client_id: u32) -> Result<()> {
+    async fn handle_client_disconnect(&mut self, client_id: Uuid) -> Result<()> {
         let client_handle = self.clients.remove(&client_id);
         if let Some(session_id) = self.client_to_session_mapping.remove(&client_id)
             && let Some(clients) = self.session_to_client_mapping.get_mut(&session_id)
@@ -215,7 +216,7 @@ impl SessionManager {
         }
         Ok(())
     }
-    async fn handle_client_switch_session(&mut self, client_id: u32, session_id: u32) -> Result<()> {
+    async fn handle_client_switch_session(&mut self, client_id: Uuid, session_id: u32) -> Result<()> {
         let client_handle = self.unmap_client(client_id).unwrap();
         self.map_client(client_id, client_handle, session_id)?;
         if let Some(session_handle) = self.sessions.get(&session_id) {
@@ -225,7 +226,7 @@ impl SessionManager {
         client_handle.success_attach_to_session(session_id).await?;
         Ok(())
     }
-    async fn handle_client_send_user_input(&mut self, client_id: u32, bytes: Bytes) -> Result<()> {
+    async fn handle_client_send_user_input(&mut self, client_id: Uuid, bytes: Bytes) -> Result<()> {
         if let Some(session_id) = self.client_to_session_mapping.get(&client_id) {
             let session_handle = self.sessions.get_mut(session_id).unwrap();
             session_handle.user_input(bytes).await
@@ -233,7 +234,7 @@ impl SessionManager {
             Ok(())
         }
     }
-    async fn handle_client_kill_pane(&mut self, client_id: u32) -> Result<()> {
+    async fn handle_client_kill_pane(&mut self, client_id: Uuid) -> Result<()> {
         if let Some(session_id) = self.client_to_session_mapping.get(&client_id) {
             let session_handle = self.sessions.get_mut(session_id).unwrap();
             session_handle.user_kill_pane().await
@@ -241,7 +242,7 @@ impl SessionManager {
             Ok(())
         }
     }
-    async fn handle_client_split_pane(&mut self, client_id: u32, direction: SplitDirection) -> Result<()> {
+    async fn handle_client_split_pane(&mut self, client_id: Uuid, direction: SplitDirection) -> Result<()> {
         if let Some(session_id) = self.client_to_session_mapping.get(&client_id) {
             let session_handle = self.sessions.get_mut(session_id).unwrap();
             session_handle.user_split_pane(direction).await
@@ -250,7 +251,7 @@ impl SessionManager {
             Ok(())
         }
     }
-    async fn handle_client_iterate_pane(&mut self, client_id: u32, is_next: bool) -> Result<()> {
+    async fn handle_client_iterate_pane(&mut self, client_id: Uuid, is_next: bool) -> Result<()> {
         if let Some(session_id) = self.client_to_session_mapping.get(&client_id) {
             let session_handle = self.sessions.get_mut(session_id).unwrap();
             session_handle.user_iterate_pane(is_next).await
@@ -267,7 +268,7 @@ impl SessionManager {
         Ok(())
     }
 
-    fn map_client(&mut self, client_id: u32, client_handle: ClientConnectionHandle, session_id: u32) -> Result<()> {
+    fn map_client(&mut self, client_id: Uuid, client_handle: ClientConnectionHandle, session_id: u32) -> Result<()> {
         self.clients.insert(client_id, client_handle);
         let clients = self.session_to_client_mapping.entry(session_id).or_insert(vec![]);
         clients.push(client_id);
@@ -275,7 +276,7 @@ impl SessionManager {
         Ok(())
     }
 
-    fn unmap_client(&mut self, client_id: u32) -> Option<ClientConnectionHandle> {
+    fn unmap_client(&mut self, client_id: Uuid) -> Option<ClientConnectionHandle> {
         let client_handle = self.clients.remove(&client_id)?;
         if let Some(session_id) = self.client_to_session_mapping.remove(&client_id)
             && let Some(clients) = self.session_to_client_mapping.get_mut(&session_id)

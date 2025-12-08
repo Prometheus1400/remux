@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use crate::{
     messages::{
@@ -35,6 +36,7 @@ impl Message for DaemonRequestMessage {}
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 pub struct Attach {
+    pub id: Uuid,
     pub session_id: u32,
     pub create: bool,
 }

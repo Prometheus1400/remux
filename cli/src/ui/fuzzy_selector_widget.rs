@@ -1,6 +1,5 @@
 use fuzzy_matcher::{FuzzyMatcher, skim::SkimMatcherV2};
 use ratatui::widgets::{Padding, StatefulWidget};
-use terminput::KeyCode;
 
 use crate::{
     app::{IndexedItem, SelectorState},
@@ -21,8 +20,7 @@ impl StatefulWidget for FuzzySelectorWidget {
             widgets::{Block, Borders, List, Paragraph},
         };
 
-        let mut list_state = &mut state.list_state;
-        let list = &state.list;
+        let list_state = &mut state.list_state;
         let filtered_items = state
             .displaying_list
             .iter()
@@ -74,7 +72,7 @@ impl StatefulWidget for FuzzySelectorWidget {
         );
 
         display_block.render(chunks[0], buf);
-        StatefulWidget::render(&list, subchunks[1], buf, &mut list_state);
+        StatefulWidget::render(&list, subchunks[1], buf, list_state);
         display_query.render(chunks[1], buf);
     }
 }

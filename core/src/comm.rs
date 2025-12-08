@@ -61,10 +61,10 @@ pub async fn send_and_recv_message<B>(stream: &mut UnixStream, req: &CliRequestM
 where
     B: RequestBody + Serialize + for<'de> Deserialize<'de>,
 {
-    let req_id = req.id;
+    // let req_id = req.id;
     send_message(stream, req).await?;
     let res: ResponseMessage<B::ResponseBody> = read_message(stream).await?;
-    let res_id = res.id;
+    // let res_id = res.id;
     // if req_id != res_id {
     //     return Err(Error::Response(ResponseError::UnexpectedId { expected: req_id, actual: res_id }));
     // }
@@ -80,6 +80,7 @@ mod test {
     use std::{fs::remove_file, path::PathBuf};
 
     use tokio::net::UnixListener;
+    use uuid::Uuid;
 
     use super::*;
     use crate::{
@@ -104,6 +105,7 @@ mod test {
         let addr = listener.local_addr()?;
 
         let attach = request::Attach {
+            id: Uuid::new_v4(),
             session_id: 1,
             create: true,
         };
