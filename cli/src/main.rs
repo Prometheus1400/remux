@@ -19,6 +19,7 @@ use remux_core::{
     },
 };
 use tokio::net::UnixStream;
+use uuid::Uuid;
 
 use crate::{
     app::App,
@@ -95,6 +96,7 @@ async fn run(command: Commands) -> Result<()> {
                 stream,
                 RequestBuilder::default()
                     .body(request::Attach {
+                        id: Uuid::new_v4(),
                         session_id,
                         create: true,
                     })
@@ -114,7 +116,7 @@ async fn attach(mut stream: UnixStream, attach_request: CliRequestMessage<Attach
     debug!(daemon_state=?res.initial_daemon_state, "Recieved initial daemon state");
 
     debug!("Starting app");
-    let mut app = App::new(stream, res.initial_daemon_state);
+    let mut app = App::new(attach_request.body.id, stream, res.initial_daemon_state);
     app.run().await?;
     debug!("App terminated");
     disable_raw_mode()?;

@@ -1,5 +1,4 @@
 use bytes::Bytes;
-use derive_more::Display;
 use handle_macro::Handle;
 use remux_core::{
     comm,
@@ -8,6 +7,7 @@ use remux_core::{
     states::DaemonState,
 };
 use tokio::{net::UnixStream, sync::mpsc};
+use uuid::Uuid;
 
 use crate::{actors::session_manager::SessionManagerHandle, layout::SplitDirection, prelude::*};
 
@@ -39,7 +39,7 @@ enum ClientConnectionState {
 }
 
 pub struct ClientConnection {
-    id: u32,
+    id: Uuid,
     stream: UnixStream,
     handle: ClientConnectionHandle,
     rx: mpsc::Receiver<ClientConnectionEvent>,
@@ -48,17 +48,17 @@ pub struct ClientConnection {
 }
 impl ClientConnection {
     pub fn spawn(
+        id: Uuid,
         stream: UnixStream,
         session_manager_handle: SessionManagerHandle,
         connecting_session_id: u32,
     ) -> Result<ClientConnectionHandle> {
-        let client = Self::new(stream, session_manager_handle);
+        let client = Self::new(id, stream, session_manager_handle);
         client.run(connecting_session_id)
     }
-    fn new(stream: UnixStream, session_manager_handle: SessionManagerHandle) -> Self {
+    fn new(id: Uuid, stream: UnixStream, session_manager_handle: SessionManagerHandle) -> Self {
         let (tx, rx) = mpsc::channel(10);
         let handle = ClientConnectionHandle { tx };
-        let id: u32 = rand::random();
 
         Self {
             id,
@@ -181,7 +181,7 @@ impl ClientConnection {
                     }
                 }
             Ok::<(), Error>(())
-            }.instrument(error_span!(parent: None, "Client Actor", id=self.id))
+            }.instrument(error_span!(parent: None, "Client Actor", id=?self.id))
         );
 
         Ok(handle_clone)

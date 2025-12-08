@@ -1,7 +1,6 @@
 use std::{fmt::Debug, io::Stdout, time::Duration};
 
 use bytes::Bytes;
-use clap::FromArgMatches;
 use color_eyre::eyre;
 use derivative::Derivative;
 use ratatui::{Terminal, prelude::CrosstermBackend, restore, widgets::ListState};
@@ -16,6 +15,7 @@ use tokio::{
     sync::{broadcast, mpsc},
     time::interval,
 };
+use uuid::Uuid;
 use vt100::Parser;
 
 use crate::{
@@ -95,11 +95,13 @@ pub struct App {
     input_parser: InputParser,
     stream: UnixStream,
     bg_tasks: Vec<CliTask>,
+    id: Uuid,
 }
 
 impl App {
-    pub fn new(stream: UnixStream, daemon_state: DaemonState) -> Self {
+    pub fn new(id: Uuid, stream: UnixStream, daemon_state: DaemonState) -> Self {
         Self {
+            id,
             stream,
             input_parser: InputParser::default(),
             state: AppState {
@@ -125,7 +127,7 @@ impl App {
         }
     }
 
-    #[instrument(parent=None, skip(self), name="App")]
+    #[instrument(parent=None, skip(self), fields(id=?self.id), name="App")]
     pub async fn run(&mut self) -> Result<()> {
         let mut term = ratatui::init();
         debug!("Starting app");
