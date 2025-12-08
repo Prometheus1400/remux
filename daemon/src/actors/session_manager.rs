@@ -17,7 +17,7 @@ use crate::{
 };
 
 #[allow(unused)]
-#[derive(Handle)]
+#[derive(Handle, Debug)]
 pub enum SessionManagerEvent {
     // client -> session manager events
     ClientConnect {
@@ -56,6 +56,10 @@ pub enum SessionManagerEvent {
         session_id: u32,
         bytes: Bytes,
     },
+    TerminalResize {
+        rows: u16,
+        cols: u16,
+    },
 }
 use SessionManagerEvent::*;
 
@@ -69,13 +73,11 @@ pub struct SessionManager {
     daemon_state: DaemonState,
 }
 impl SessionManager {
-    #[instrument]
     pub fn spawn() -> Result<SessionManagerHandle> {
         let session_manager = SessionManager::new();
         session_manager.run()
     }
 
-    #[instrument]
     fn new() -> Self {
         let (tx, rx) = mpsc::channel(10);
         let handle = SessionManagerHandle { tx };
@@ -92,12 +94,19 @@ impl SessionManager {
 
     #[instrument(skip(self))]
     fn run(mut self) -> Result<SessionManagerHandle> {
-        let span = tracing::Span::current();
         let handle_clone = self.handle.clone();
         let _task = tokio::spawn({
             async move {
                 loop {
                     if let Some(event) = self.rx.recv().await {
+                        match &event {
+                            SessionSendOutput { .. } => {
+                                trace!(event=?event);
+                            }
+                            _ => {
+                                info!(event=?event);
+                            }
+                        }
                         match event {
                             ClientConnect {
                                 client_id,
@@ -105,44 +114,41 @@ impl SessionManager {
                                 session_id,
                                 create_session,
                             } => {
-                                debug!("SessionManager: ClientConnect");
                                 self.handle_client_connect(client_id, client_handle, session_id, create_session)
                                     .await
                                     .unwrap();
                             }
                             ClientDisconnect { client_id } => {
-                                debug!("SessionManager: ClientDisconnect");
                                 self.handle_client_disconnect(client_id).await.unwrap();
                             }
                             ClientSwitchSession { client_id, session_id } => {
-                                debug!("SessionManager: ClientSwitchSession");
                                 self.handle_client_switch_session(client_id, session_id).await.unwrap();
                             }
                             UserInput { client_id, bytes } => {
-                                trace!("SessionManager: UserInput");
                                 self.handle_client_send_user_input(client_id, bytes).await.unwrap();
                             }
                             UserSplitPane { client_id, direction } => {
-                                debug!("SessionManager: UserSplitPane");
                                 self.handle_client_split_pane(client_id, direction).await.unwrap();
                             }
                             UserIteratePane { client_id, is_next } => {
-                                debug!("SessionManager: UserIteratePane");
                                 self.handle_client_iterate_pane(client_id, is_next).await.unwrap();
                             }
                             UserKillPane { client_id } => {
-                                debug!("SessionManager: UserKillPane");
                                 self.handle_client_kill_pane(client_id).await.unwrap();
                             }
                             SessionSendOutput { session_id, bytes } => {
-                                trace!("SessionManager: SessionSendOutput");
                                 self.handle_session_send_output(session_id, bytes).await.unwrap();
+                            }
+                            TerminalResize { rows, cols } => {
+                                for session in self.sessions.values_mut() {
+                                    session.terminal_resize(rows, cols).await.unwrap();
+                                }
                             }
                         }
                     }
                 }
             }
-            .instrument(span)
+            .instrument(error_span!(parent: None, "Session Manager"))
         });
 
         Ok(handle_clone)

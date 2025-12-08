@@ -12,7 +12,7 @@ use crate::{
     prelude::*,
 };
 
-#[derive(Handle)]
+#[derive(Handle, Debug)]
 pub enum PaneEvent {
     UserInput(Bytes),
     PtyOutput(Bytes),
@@ -44,12 +44,11 @@ pub struct Pane {
     rect: Rect,
 }
 impl Pane {
-    #[instrument(skip(window_handle))]
+    #[instrument(skip(window_handle, rect), name = "Pane")]
     pub fn spawn(window_handle: WindowHandle, id: usize, rect: Rect) -> Result<PaneHandle> {
         let pane = Pane::new(window_handle, id, rect)?;
         pane.run()
     }
-    #[instrument(skip(window_handle))]
     fn new(window_handle: WindowHandle, id: usize, rect: Rect) -> Result<Self> {
         let (tx, rx) = mpsc::channel(10);
         let handle = PaneHandle { tx };
@@ -68,62 +67,57 @@ impl Pane {
             rect,
         })
     }
-    #[instrument(skip(self))]
     fn run(mut self) -> Result<PaneHandle> {
-        let span = tracing::Span::current();
         let handle_clone = self.handle.clone();
-        let _task = tokio::spawn({
+        let _task = tokio::spawn(
             async move {
                 loop {
                     if let Some(event) = self.rx.recv().await {
+                        match &event {
+                            UserInput(..) | PtyOutput(..) => {
+                                trace!(event=?event);
+                            }
+                            _ => {
+                                info!(event=?event);
+                            }
+                        }
                         match event {
                             UserInput(bytes) => {
-                                trace!("Pane: UserInput({bytes:?})");
                                 self.handle_input(bytes).await.unwrap();
                             }
                             PtyOutput(bytes) => {
-                                trace!("Pane: PtyOutput({bytes:?}");
                                 if let Err(e) = self.handle_pty_output(bytes).await {
                                     error!("Error while handling PTY output: {}", e);
                                 }
                             }
                             PtyDied => {
-                                debug!("Pane: PtyDied");
                                 break;
                             }
                             Kill => {
-                                debug!("Pane: Kill");
                                 self.pty_handle.kill().await.unwrap();
                                 break;
                             }
                             Render => {
-                                trace!("Pane: Render");
-                                if let Err(e) = self.handle_render().await {
-                                    error!("Error while rendering pane: {}", e);
-                                }
+                                self.handle_render().await.unwrap();
                             }
                             Rerender => {
-                                debug!("Pane: Rerender");
                                 self.handle_rerender().await.unwrap();
                             }
                             Resize { rect } => {
-                                debug!("Pane: Resize");
                                 self.handle_resize(rect).await.unwrap();
                             }
                             Hide => {
-                                debug!("Pane: Hide");
                                 self.pane_state = PaneState::Hidden;
                             }
                             Reveal => {
-                                debug!("Pane: Reveal");
                                 self.pane_state = PaneState::Visible;
                             }
                         }
                     }
                 }
             }
-            .instrument(span)
-        });
+            .in_current_span(),
+        );
 
         Ok(handle_clone)
     }

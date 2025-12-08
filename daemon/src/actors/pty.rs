@@ -43,13 +43,12 @@ pub struct Pty {
     rect: Rect,
 }
 impl Pty {
-    #[instrument(skip(pane_handle, rect))]
+    #[instrument(skip(pane_handle, rect), name = "Pty")]
     pub fn spawn(pane_handle: PaneHandle, rect: Rect) -> Result<PtyHandle> {
         let pty = Pty::new(pane_handle, rect);
         pty.run()
     }
 
-    #[instrument(skip(pane_handle, rect))]
     fn new(pane_handle: PaneHandle, rect: Rect) -> Self {
         let (tx, rx) = mpsc::channel::<PtyEvent>(10);
         let (pty_tx, pty_rx) = mpsc::unbounded_channel::<Bytes>();
@@ -63,9 +62,7 @@ impl Pty {
         }
     }
 
-    #[instrument(skip(self))]
     fn run(mut self) -> Result<PtyHandle> {
-        let span = tracing::Span::current();
         debug!("forking and spawning child PTY process");
         let fork_result = unsafe { forkpty(None, None)? };
 
@@ -85,6 +82,8 @@ impl Pty {
                             tokio::select! {
                                 // read from PTY
                                 Ok(mut guard) = async_fd.readable() => {
+                                    let span = error_span!("Pty Reader");
+                                    let _gard = span.enter();
                                     let mut buf = [0u8; 1024];
                                     match guard.try_io(|fd| unistd::read(fd.get_ref(), &mut buf).map_err(|e| e.into())) {
                                         Ok(Ok(n)) if n > 0 => {
@@ -92,7 +91,7 @@ impl Pty {
                                             self.pane_handle.pty_output(Bytes::copy_from_slice(&buf[..n])).await.unwrap();
                                         },
                                         Ok(Ok(_)) => {
-                                            handler.kill().await?;
+                                            handler.kill().await.unwrap();
                                         },
                                         Ok(Err(e)) => {
                                             error!("Error reading: {e}");
@@ -103,9 +102,11 @@ impl Pty {
                                 },
                                 // write to PTY
                                 data_opt = self.pty_rx.recv() => {
+                                    let span = error_span!("Pty Writer");
+                                    let _gard = span.enter();
                                     match data_opt {
                                         Some(data) => {
-                                            let mut guard = async_fd.writable().await?;
+                                            let mut guard = async_fd.writable().await.unwrap();
                                             let _res = guard.try_io(|fd| {
                                                 match unistd::write(fd.get_ref(), &data) {
                                                     Ok(n) if n > 0 => trace!("wrote {n} bytes to pty"),
@@ -125,19 +126,21 @@ impl Pty {
                                 },
                                 // event handler
                                 Some(event) = self.rx.recv() => {
-                                    let res = match event.clone() {
+                                    let span = error_span!("Recieved Pty Event");
+                                    let _guard = span.enter();
+                                    let res = match &event {
                                         Kill => {
-                                            debug!("Pty: Kill");
+                                            info!(event=?event);
                                             Self::handle_kill(child)?;
                                             break;
                                         }
                                         Input{bytes} => {
-                                            trace!("Pty: Input({bytes:?}");
+                                            trace!(event=?event);
                                             self.handle_input(bytes.clone())
                                         },
                                         Resize { rect } => {
-                                            debug!("Pty: Resize");
-                                            self.handle_resize(async_fd.get_ref().as_raw_fd(), rect)
+                                            info!(event=?event);
+                                            self.handle_resize(async_fd.get_ref().as_raw_fd(), *rect)
                                         }
                                     };
                                     if let Err(e) = res {
@@ -166,7 +169,7 @@ impl Pty {
                             warn!("Could not notify pane that PTY died (Pane has likely already died) {}", e);
                         }
                         Ok(())
-                    }.instrument(span)
+                    }.in_current_span()
                 });
 
                 Ok(handle)

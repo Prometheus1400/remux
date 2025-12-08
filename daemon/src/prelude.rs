@@ -1,6 +1,6 @@
 #![allow(unused_imports)]
 use tokio::task::JoinHandle;
-pub use tracing::{debug, error, info, instrument, trace, warn};
+pub use tracing::{Instrument, debug, error, error_span, event, info, info_span, instrument, trace, warn};
 
 pub type DaemonTask = JoinHandle<std::result::Result<(), color_eyre::eyre::Error>>;
 

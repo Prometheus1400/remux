@@ -48,15 +48,12 @@ pub async fn send_message(stream: &mut UnixStream, message: &impl Message) -> Re
 }
 
 pub async fn read_message<M: Message>(stream: &mut UnixStream) -> Result<M> {
-    println!("reading message");
     let mut num_bytes = [0u8; 4];
     stream.read_exact(&mut num_bytes).await?;
     let num_bytes = u32::from_be_bytes(num_bytes);
     let mut message_bytes = vec![0u8; num_bytes as usize];
     stream.read_exact(&mut message_bytes).await?;
-    println!("reading message2");
     let res = serde_json::from_slice(&message_bytes)?;
-    println!("here");
     Ok(res)
 }
 
