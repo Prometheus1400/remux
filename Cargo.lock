@@ -1118,6 +1118,7 @@ dependencies = [
  "bytes",
  "color-eyre",
  "crossterm 0.29.0",
+ "derive_more",
  "handle-macro",
  "itertools 0.14.0",
  "nix",
@@ -1127,6 +1128,7 @@ dependencies = [
  "serde",
  "tokio",
  "tracing",
+ "tracing-error",
  "tracing-subscriber",
  "vt100",
 ]

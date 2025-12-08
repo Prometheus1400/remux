@@ -30,7 +30,7 @@ impl RemuxDaemon {
         })
     }
 
-    #[instrument(skip(self))]
+    #[instrument(skip(self), name = "daemon")]
     pub async fn listen(&self) -> Result<()> {
         let socket_path = get_sock_path()?;
 
@@ -38,11 +38,11 @@ impl RemuxDaemon {
             remove_file(&socket_path)?;
         }
 
-        info!("unix socket path: {:?}", socket_path);
+        info!(path = ?socket_path, "Connecting to unix socket");
         let listener = UnixListener::bind(socket_path)?;
         loop {
             let (stream, _) = listener.accept().await?;
-            info!("accepting connection");
+            info!("Accepting connection");
             if let Err(e) = handle_message(self.session_manager_handle.clone(), stream).await {
                 error!("{e}");
             }
@@ -55,10 +55,14 @@ async fn handle_message(session_manager_handle: SessionManagerHandle, mut stream
     use remux_core::messages::request::{self, DaemonRequestMessage, DaemonRequestMessageBody};
 
     let req: DaemonRequestMessage = comm::read_message(&mut stream).await?;
-    debug!("Handling message: {req:?}");
+    info!(request=?req, "Handling request");
     match req.body {
         DaemonRequestMessageBody::Attach(request::Attach { session_id, create }) => {
-            debug!("running new client actor");
+            info!(
+                connecting_session = session_id,
+                create = create,
+                "Creating new client actor"
+            );
             let _client = ClientConnection::spawn(stream, session_manager_handle, session_id)?;
         }
     };

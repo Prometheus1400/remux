@@ -13,7 +13,7 @@ use crate::{
 };
 
 #[allow(unused)]
-#[derive(Handle)]
+#[derive(Handle, Debug)]
 pub enum SessionEvent {
     // user input
     UserInput(Bytes),
@@ -27,7 +27,8 @@ pub enum SessionEvent {
     Redraw,
 
     // output
-    WindowOutput { bytes: Bytes },
+    WindowOutput(Bytes),
+    TerminalResize { rows: u16, cols: u16 },
     Kill,
 }
 use SessionEvent::*;
@@ -40,12 +41,11 @@ pub struct Session {
     window_handle: WindowHandle,
 }
 impl Session {
-    #[instrument(skip(session_manager_handle), fields(session_id = id))]
+    #[instrument(parent=None, skip(session_manager_handle), name="Session")]
     pub fn spawn(id: u32, session_manager_handle: SessionManagerHandle) -> Result<SessionHandle> {
         let session = Session::new(id, session_manager_handle);
         session.run()
     }
-    #[instrument(skip(session_manager_handle), fields(session_id = id))]
     fn new(id: u32, session_manager_handle: SessionManagerHandle) -> Self {
         let (tx, rx) = mpsc::channel(10);
         let handle = SessionHandle { tx };
@@ -58,54 +58,55 @@ impl Session {
             window_handle,
         }
     }
-    #[instrument(skip(self), fields(session_id = self.id))]
     fn run(mut self) -> Result<SessionHandle> {
-        let span = tracing::Span::current();
         let handle_clone = self.handle.clone();
-
-        let _task = tokio::spawn({
+        let _task = tokio::spawn(
             async move {
                 loop {
                     if let Some(event) = self.rx.recv().await {
+                        match &event {
+                            WindowOutput(..) | UserInput(..) => {
+                                trace!(event=?event);
+                            }
+                            _ => {
+                                info!(event=?event);
+                            }
+                        }
                         match event {
                             UserInput(bytes) => {
-                                trace!("Session: UserInput");
                                 self.handle_user_input(bytes).await.unwrap();
                             }
                             UserConnection => {
-                                debug!("Session: UserConnection");
                                 self.handle_new_connection().await.unwrap();
                             }
                             UserSplitPane { direction } => {
-                                debug!("Session: UserSplitPane");
                                 self.handle_split_pane(direction).await.unwrap();
                             }
                             UserIteratePane { is_next } => {
-                                debug!("Session: UserIteratePane");
                                 self.handle_iterate_pane(is_next).await.unwrap();
                             }
                             UserKillPane => {
-                                debug!("Session: UserKillPane");
                                 self.handle_kill_pane().await.unwrap();
                             }
-                            WindowOutput { bytes } => {
-                                trace!("Session: WindowOutput");
+                            WindowOutput(bytes) => {
                                 self.handle_window_output(bytes).await.unwrap();
                             }
                             Redraw => {
                                 self.window_handle.redraw().await.unwrap();
                             }
                             Kill => {
-                                debug!("Session: Kill");
                                 self.window_handle.kill().await.unwrap();
                                 break;
+                            }
+                            TerminalResize { rows, cols } => {
+                                self.window_handle.terminal_resize(rows, cols).await.unwrap();
                             }
                         }
                     }
                 }
             }
-            .instrument(span)
-        });
+            .in_current_span(),
+        );
 
         Ok(handle_clone)
     }
