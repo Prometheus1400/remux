@@ -82,8 +82,8 @@ impl ClientConnection {
                             let span = error_span!("Recieved Client Connection Event");
                             let _guard = span.enter();
                             match &event {
-                                SessionOutput(..) => {
-                                    trace!(event=?event);
+                                SessionOutput(bytes) => {
+                                    trace!(event=?event, num_bytes=bytes.len());
                                 }
                                 _ => {
                                     info!(event=?event);

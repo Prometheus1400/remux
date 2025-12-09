@@ -175,8 +175,8 @@ impl App {
                             let span = error_span!("Recieved Daemon Event");
                             let _guard = span.enter();
                             match &event {
-                                DaemonEvent::Raw(..) => {
-                                    trace!(event=?event);
+                                DaemonEvent::Raw(bytes) => {
+                                    trace!(event=?event, num_bytes=bytes.len());
                                 }
                                 _ => {
                                     info!(event=?event);
@@ -202,7 +202,7 @@ impl App {
                         }
                         Err(e) => {
                             error!(error=%e, "Error receiving daemon event");
-                            break;
+                            // break;
                         }
                     }
                 }

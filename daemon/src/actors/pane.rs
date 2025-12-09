@@ -129,7 +129,7 @@ impl Pane {
 
     async fn handle_pty_output(&mut self, bytes: Bytes) -> Result<()> {
         self.vte.process(&bytes);
-        self.handle.rerender().await
+        self.handle_rerender().await
     }
 
     // TODO: below code is bad and unused, need better diffing solution
