@@ -242,7 +242,7 @@ impl App {
                 ui::traits::Selection::Index(i) => match self.state.mode {
                     AppMode::SelectingSession => {
                         let session = &self.state.daemon.sessions[i];
-                        comm::send_event(&mut self.stream, CliEvent::SwitchSession(session.id)).await?;
+                        comm::send_event(&mut self.stream, CliEvent::SwitchSession(session.name.clone())).await?;
                     }
                     AppMode::Normal => {}
                 },

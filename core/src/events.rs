@@ -12,7 +12,7 @@ pub enum CliEvent {
     SplitPaneHorizontal,
     PrevPane,
 
-    SwitchSession(u32), // switch session - does nothing if session does not exist
+    SwitchSession(String), // switch session - does nothing if session does not exist
 
     TerminalResize { rows: u16, cols: u16 },
 

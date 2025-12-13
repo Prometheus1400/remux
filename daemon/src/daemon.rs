@@ -57,7 +57,11 @@ async fn handle_message(session_manager_handle: SessionManagerHandle, mut stream
     let req: DaemonRequestMessage = comm::read_message(&mut stream).await?;
     info!(request=?req, "Handling request");
     match req.body {
-        DaemonRequestMessageBody::Attach(request::Attach { id, session_name, create }) => {
+        DaemonRequestMessageBody::Attach(request::Attach {
+            id,
+            session_name,
+            create,
+        }) => {
             info!(
                 connecting_session = session_name,
                 create = create,

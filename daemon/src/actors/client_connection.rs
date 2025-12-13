@@ -166,8 +166,8 @@ impl ClientConnection {
                                         CliEvent::PrevPane => {
                                             self.session_manager_handle.user_iterate_pane(self.id, false).await.unwrap();
                                         },
-                                        CliEvent::SwitchSession(session_id) => {
-                                            self.session_manager_handle.client_switch_session(self.id, session_id).await.unwrap();
+                                        CliEvent::SwitchSession(session_name) => {
+                                            self.session_manager_handle.client_switch_session(self.id, session_name).await.unwrap();
                                         }
                                     }
                                 }
