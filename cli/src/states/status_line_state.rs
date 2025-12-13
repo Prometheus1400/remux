@@ -29,8 +29,15 @@ impl StatusLineState {
     pub fn apply_built_ins(&mut self, state: &AppState) {
         for item in self.a.iter_mut().chain(self.b.iter_mut()).chain(self.c.iter_mut()) {
             if item.as_str() == "active-session" {
-                if let Some(s) = state.daemon.active_session.map(|s| s.to_string()) {
-                    *item = s;
+                if let Some(name) = state.daemon.active_session.and_then(|id| {
+                    state
+                        .daemon
+                        .sessions
+                        .iter()
+                        .find(|session_info| session_info.id == id)
+                        .map(|session_info| &session_info.name)
+                }) {
+                    *item = name.clone();
                 } else {
                     *item = "".to_owned();
                 }

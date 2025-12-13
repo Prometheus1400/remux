@@ -76,11 +76,7 @@ impl Window {
         let init_pane_id = 0;
         let init_layout_node = LayoutNode::Pane { id: init_pane_id };
 
-        let (cols, rows) = match terminal::size() {
-            Ok((c, r)) => (c, r),
-            Err(_) => (80, 24),
-        };
-
+        let (cols, rows) = (80, 24);
         let root_rect = Rect {
             x: 0,
             y: 0,
@@ -257,11 +253,11 @@ impl Window {
             }
         }
 
-        self.session_handle
-            .window_output(Bytes::from(
-                crossterm::terminal::Clear(crossterm::terminal::ClearType::All).to_string(),
-            ))
-            .await?;
+        // self.session_handle
+        //     .window_output(Bytes::from(
+        //         crossterm::terminal::Clear(crossterm::terminal::ClearType::All).to_string(),
+        //     ))
+        //     .await?;
         self.handle_redraw().await?;
         Ok(())
     }

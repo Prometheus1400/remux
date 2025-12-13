@@ -91,13 +91,13 @@ async fn run(command: Commands) -> Result<()> {
     let stream = connect().await?;
     debug!("Running command");
     match command {
-        Commands::Attach { session_id } => {
+        Commands::Attach { session_name } => {
             attach(
                 stream,
                 RequestBuilder::default()
                     .body(request::Attach {
                         id: Uuid::new_v4(),
-                        session_id,
+                        session_name,
                         create: true,
                     })
                     .build(),

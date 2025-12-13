@@ -37,7 +37,7 @@ impl Message for DaemonRequestMessage {}
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 pub struct Attach {
     pub id: Uuid,
-    pub session_id: u32,
+    pub session_name: String,
     pub create: bool,
 }
 impl RequestBody for Attach {
