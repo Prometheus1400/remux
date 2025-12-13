@@ -106,7 +106,7 @@ mod test {
 
         let attach = request::Attach {
             id: Uuid::new_v4(),
-            session_id: 1,
+            session_name: "session".to_owned(),
             create: true,
         };
         let cli_req = RequestBuilder::default().body(attach.clone()).build();
