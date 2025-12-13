@@ -145,8 +145,8 @@ impl ClientConnection {
                                         CliEvent::Raw(bytes) => {
                                             self.session_manager_handle.user_input(self.id, bytes).await.unwrap();
                                         },
-                                        CliEvent::TerminalResize{rows, cols} => {
-                                            self.session_manager_handle.terminal_resize(rows, cols).await.unwrap();
+                                        CliEvent::WindowResize{rows, cols} => {
+                                            self.session_manager_handle.window_resize(rows, cols).await.unwrap();
                                         },
                                         CliEvent::Detach => {
                                             self.session_manager_handle.client_disconnect(self.id).await.unwrap();

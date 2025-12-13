@@ -58,7 +58,7 @@ pub enum SessionManagerEvent {
         session_id: u32,
         bytes: Bytes,
     },
-    TerminalResize {
+    WindowResize {
         rows: u16,
         cols: u16,
     },
@@ -275,9 +275,9 @@ impl SessionManager {
                             SessionSendOutput { session_id, bytes } => {
                                 self.handle_session_send_output(session_id, bytes).await.unwrap();
                             }
-                            TerminalResize { rows, cols } => {
+                            WindowResize { rows, cols } => {
                                 for SessionInfo { handle, .. } in self.state.sessions.values_mut() {
-                                    handle.terminal_resize(rows, cols).await.unwrap();
+                                    handle.window_resize(rows, cols).await.unwrap();
                                 }
                             }
                         }
