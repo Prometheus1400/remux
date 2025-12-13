@@ -26,7 +26,7 @@ pub enum DaemonEvent {
     // session events
     CurrentSessions(Vec<u32>),
     ActiveSession(u32),
-    NewSession(u32),
+    NewSession(u32, String),
     DeletedSession(u32),
     // TODO: for window id
     Disconnected,

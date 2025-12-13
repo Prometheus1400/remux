@@ -22,7 +22,7 @@ pub enum ClientConnectionEvent {
     Disconnect,
 
     // client side state update events
-    NewSession(u32),
+    NewSession(u32, String),
 
     // variants related to initialization phase
     InitialAttach(u32), // invoked directly by the daemon
@@ -51,10 +51,10 @@ impl ClientConnection {
         id: Uuid,
         stream: UnixStream,
         session_manager_handle: SessionManagerHandle,
-        connecting_session_id: u32,
+        initial_session_name: &str,
     ) -> Result<ClientConnectionHandle> {
         let client = Self::new(id, stream, session_manager_handle);
-        client.run(connecting_session_id)
+        client.run(initial_session_name)
     }
     fn new(id: Uuid, stream: UnixStream, session_manager_handle: SessionManagerHandle) -> Self {
         let (tx, rx) = mpsc::channel(10);
@@ -69,12 +69,13 @@ impl ClientConnection {
             state: ClientConnectionState::Unattached,
         }
     }
-    fn run(mut self, initial_session_id: u32) -> Result<ClientConnectionHandle> {
+    fn run(mut self, initial_session_name: &str) -> Result<ClientConnectionHandle> {
         let handle_clone = self.handle.clone();
+        let session_name = initial_session_name.to_owned();
         let _task = tokio::spawn(
             async move {
                 let handle = self.handle.clone();
-                self.session_manager_handle.client_connect(self.id, handle.clone(), initial_session_id, true).await?;
+                self.session_manager_handle.client_connect(self.id, handle.clone(), Some(session_name), true).await?;
                 loop {
                     use remux_core::events::CliEvent;
                     tokio::select! {
@@ -119,8 +120,8 @@ impl ClientConnection {
                                 SessionOutput(bytes) => {
                                     comm::send_event(&mut self.stream, DaemonEvent::Raw(bytes)).await.unwrap();
                                 }
-                                NewSession(session_id) => {
-                                    comm::send_event(&mut self.stream, DaemonEvent::NewSession(session_id)).await.unwrap();
+                                NewSession(session_id, session_name) => {
+                                    comm::send_event(&mut self.stream, DaemonEvent::NewSession(session_id, session_name)).await.unwrap();
                                 }
                                 _ => {
                                     error!(event=?event, state=?self.state, "Unhandled or invalid event for current state");

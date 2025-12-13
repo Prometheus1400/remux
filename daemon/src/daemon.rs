@@ -57,13 +57,13 @@ async fn handle_message(session_manager_handle: SessionManagerHandle, mut stream
     let req: DaemonRequestMessage = comm::read_message(&mut stream).await?;
     info!(request=?req, "Handling request");
     match req.body {
-        DaemonRequestMessageBody::Attach(request::Attach { id, session_id, create }) => {
+        DaemonRequestMessageBody::Attach(request::Attach { id, session_name, create }) => {
             info!(
-                connecting_session = session_id,
+                connecting_session = session_name,
                 create = create,
                 "Creating new client actor"
             );
-            let _client = ClientConnection::spawn(id, stream, session_manager_handle, session_id)?;
+            let _client = ClientConnection::spawn(id, stream, session_manager_handle, &session_name)?;
         }
     };
     Ok(())

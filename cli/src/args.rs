@@ -10,7 +10,7 @@ pub struct Args {
 pub enum Commands {
     Attach {
         #[arg(short = 's', long = "session")]
-        session_id: u32,
+        session_name: String,
     },
     Session {
         #[command(subcommand)]

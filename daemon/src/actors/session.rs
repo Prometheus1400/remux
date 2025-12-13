@@ -1,7 +1,7 @@
 use bytes::Bytes;
 use handle_macro::Handle;
 use tokio::sync::mpsc;
-use tracing::Instrument;
+use tracing::{Instrument, Span};
 
 use crate::{
     actors::{
@@ -26,6 +26,8 @@ pub enum SessionEvent {
     UserKillPane,
     Redraw,
 
+    RenameSession(String),
+
     // output
     WindowOutput(Bytes),
     TerminalResize { rows: u16, cols: u16 },
@@ -35,6 +37,7 @@ use SessionEvent::*;
 
 pub struct Session {
     id: u32,
+    name: String,
     handle: SessionHandle,
     session_manager_handle: SessionManagerHandle,
     rx: mpsc::Receiver<SessionEvent>,
@@ -42,16 +45,17 @@ pub struct Session {
 }
 impl Session {
     #[instrument(parent=None, skip(session_manager_handle), name="Session")]
-    pub fn spawn(id: u32, session_manager_handle: SessionManagerHandle) -> Result<SessionHandle> {
-        let session = Session::new(id, session_manager_handle);
+    pub fn spawn(id: u32, name: String, session_manager_handle: SessionManagerHandle) -> Result<SessionHandle> {
+        let session = Session::new(id, name, session_manager_handle);
         session.run()
     }
-    fn new(id: u32, session_manager_handle: SessionManagerHandle) -> Self {
+    fn new(id: u32, name: String, session_manager_handle: SessionManagerHandle) -> Self {
         let (tx, rx) = mpsc::channel(10);
         let handle = SessionHandle { tx };
         let window_handle = Window::spawn(handle.clone()).unwrap();
         Self {
             id,
+            name,
             session_manager_handle,
             handle,
             rx,
@@ -100,6 +104,11 @@ impl Session {
                             }
                             TerminalResize { rows, cols } => {
                                 self.window_handle.terminal_resize(rows, cols).await.unwrap();
+                            }
+                            RenameSession(name) => {
+                                let span = Span::current();
+                                self.name = name.clone();
+                                span.record("name", name);
                             }
                         }
                     }

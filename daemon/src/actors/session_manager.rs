@@ -1,9 +1,10 @@
-use std::{collections::HashMap, vec};
+use std::collections::HashMap;
 
 use bytes::Bytes;
-use color_eyre::eyre;
+use color_eyre::eyre::{self, OptionExt, eyre};
 use handle_macro::Handle;
-use remux_core::states::DaemonState;
+use itertools::Itertools;
+use remux_core::states::{self, DaemonState};
 use tokio::sync::mpsc;
 use tracing::Instrument;
 use uuid::Uuid;
@@ -24,7 +25,7 @@ pub enum SessionManagerEvent {
     ClientConnect {
         client_id: Uuid,
         client_handle: ClientConnectionHandle,
-        session_id: u32,
+        session_name: Option<String>,
         create_session: bool,
     },
     ClientDisconnect {
@@ -64,13 +65,143 @@ pub enum SessionManagerEvent {
 }
 use SessionManagerEvent::*;
 
+#[derive(Debug)]
+struct SessionInfo {
+    pub handle: SessionHandle,
+    pub name: String,
+    pub id: u32,
+}
+
+#[derive(Debug)]
+struct SessionManagerState {
+    session_name_to_id: HashMap<String, u32>,
+    sessions: HashMap<u32, SessionInfo>,
+    session_to_client_mapping: HashMap<u32, Vec<Uuid>>, // support multiple clients attached to same session
+    clients: HashMap<Uuid, ClientConnectionHandle>,
+    client_to_session_mapping: HashMap<Uuid, u32>, // one client can only attach to one session
+    session_id_count: u32,
+    manager_handle: SessionManagerHandle,
+}
+
+impl SessionManagerState {
+    pub fn new(manager_handle: &SessionManagerHandle) -> Self {
+        Self {
+            session_name_to_id: Default::default(),
+            sessions: Default::default(),
+            session_to_client_mapping: Default::default(),
+            clients: Default::default(),
+            client_to_session_mapping: Default::default(),
+            session_id_count: Default::default(),
+            manager_handle: manager_handle.clone(),
+        }
+    }
+    pub fn snapshot(&self) -> DaemonState {
+        let mut daemon_state = DaemonState::default();
+        daemon_state.sessions = self
+            .sessions
+            .values()
+            .map(|s| states::SessionInfo {
+                id: s.id,
+                name: s.name.clone(),
+            })
+            .collect_vec();
+        daemon_state
+    }
+    pub fn get_by_id(&self, id: u32) -> Option<&SessionInfo> {
+        self.sessions.get(&id)
+    }
+    pub fn get_by_name(&self, name: &str) -> Option<&SessionInfo> {
+        self.session_name_to_id.get(name).and_then(|id| self.sessions.get(&id))
+    }
+    fn new_session_id(&mut self) -> u32 {
+        let x = self.session_id_count;
+        self.session_id_count += 1;
+        x
+    }
+
+    pub fn get_session_for_client(&self, client_id: &Uuid) -> Result<&SessionInfo> {
+        let session_id = self
+            .client_to_session_mapping
+            .get(client_id)
+            .ok_or_eyre("client has no session")?;
+        self.sessions.get(session_id).ok_or_eyre("no session")
+    }
+
+    pub fn get_clients_for_session(&self, session_id: &u32) -> Result<Vec<&ClientConnectionHandle>> {
+        let client_ids = self
+            .session_to_client_mapping
+            .get(session_id)
+            .ok_or_eyre("error getting clients for session")?;
+        Ok(self
+            .clients
+            .iter()
+            .filter(|c| client_ids.contains(c.0))
+            .map(|c| c.1)
+            .collect_vec())
+    }
+
+    pub fn create_new(&mut self, name: Option<&str>) -> Result<&SessionInfo> {
+        if name.and_then(|n| self.get_by_name(n)).is_some() {
+            Err(eyre!("duplicate session"))
+        } else {
+            let id = self.new_session_id();
+            let name = name.map(|n| n.to_owned()).unwrap_or(id.to_string());
+            let handle = Session::spawn(id, name.clone(), self.manager_handle.clone())?;
+            self.session_name_to_id.insert(name.clone(), id);
+            self.sessions.insert(id, SessionInfo { handle, name, id });
+            self.sessions
+                .get(&id)
+                .ok_or(eyre!("couldn't get session info from sessions"))
+        }
+    }
+
+    pub fn attach_client(
+        &mut self,
+        client_id: Uuid,
+        client_handle: &ClientConnectionHandle,
+        session_name: &str,
+        create: bool,
+    ) -> Result<()> {
+        let mut id_opt = self.get_by_name(session_name).map(|info| info.id);
+        if id_opt.is_none() && create {
+            id_opt = Some(self.create_new(Some(session_name))?.id);
+        }
+
+        if let Some(id) = id_opt {
+            self.session_to_client_mapping
+                .entry(id)
+                .or_insert(Default::default())
+                .push(client_id.clone());
+            self.client_to_session_mapping.insert(client_id.clone(), id);
+            self.clients.insert(client_id, client_handle.clone());
+            Ok(())
+        } else {
+            Err(eyre!("no session to attach client"))
+        }
+    }
+    pub fn client_switch_session(&mut self, client_id: Uuid, session_name: &str) -> Result<()> {
+        let id_opt = self.get_by_name(session_name).map(|info| info.id);
+        if let Some(id) = id_opt {
+            if let Some(clients) = self.session_to_client_mapping.get_mut(&id) {
+                clients.retain(|id| id != &client_id);
+            }
+            self.session_to_client_mapping
+                .get_mut(&id)
+                .ok_or(eyre!("session should exist"))?
+                .push(client_id.clone());
+            self.client_to_session_mapping.insert(client_id, id);
+            Ok(())
+        } else {
+            Err(eyre!("no such session to switch to"))
+        }
+    }
+}
+
+#[derive(Debug)]
 pub struct SessionManager {
     handle: SessionManagerHandle,
     rx: mpsc::Receiver<SessionManagerEvent>,
-    sessions: HashMap<u32, SessionHandle>,
-    clients: HashMap<Uuid, ClientConnectionHandle>,
-    session_to_client_mapping: HashMap<u32, Vec<Uuid>>, // support multiple clients attached to same session
-    client_to_session_mapping: HashMap<Uuid, u32>,      // one client can only attach to one session
+    state: SessionManagerState,
     daemon_state: DaemonState,
 }
 impl SessionManager {
@@ -83,12 +214,9 @@ impl SessionManager {
         let (tx, rx) = mpsc::channel(10);
         let handle = SessionManagerHandle { tx };
         Self {
-            handle,
+            handle: handle.clone(),
             rx,
-            sessions: HashMap::new(),
-            clients: HashMap::new(),
-            session_to_client_mapping: HashMap::new(),
-            client_to_session_mapping: HashMap::new(),
+            state: SessionManagerState::new(&handle),
             daemon_state: DaemonState::default(),
         }
     }
@@ -112,18 +240,24 @@ impl SessionManager {
                             ClientConnect {
                                 client_id,
                                 client_handle,
-                                session_id,
+                                session_name,
                                 create_session,
                             } => {
-                                self.handle_client_connect(client_id, client_handle, session_id, create_session)
-                                    .await
-                                    .unwrap();
+                                self.handle_client_connect(
+                                    client_id,
+                                    client_handle,
+                                    session_name.as_deref(),
+                                    create_session,
+                                )
+                                .await
+                                .unwrap();
                             }
                             ClientDisconnect { client_id } => {
                                 self.handle_client_disconnect(client_id).await.unwrap();
                             }
                             ClientSwitchSession { client_id, session_id } => {
-                                self.handle_client_switch_session(client_id, session_id).await.unwrap();
+                                todo!();
+                                // self.handle_client_switch_session(client_id, session_id).await.unwrap();
                             }
                             UserInput { client_id, bytes } => {
                                 self.handle_client_send_user_input(client_id, bytes).await.unwrap();
@@ -141,8 +275,8 @@ impl SessionManager {
                                 self.handle_session_send_output(session_id, bytes).await.unwrap();
                             }
                             TerminalResize { rows, cols } => {
-                                for session in self.sessions.values_mut() {
-                                    session.terminal_resize(rows, cols).await.unwrap();
+                                for SessionInfo { handle, .. } in self.state.sessions.values_mut() {
+                                    handle.terminal_resize(rows, cols).await.unwrap();
                                 }
                             }
                         }
@@ -156,133 +290,114 @@ impl SessionManager {
     }
 
     /// creates a new session and handles updating the state and notifying clients about the update
-    async fn create_session(&mut self, session_id: u32) -> Result<&SessionHandle> {
-        let new_session = Session::spawn(session_id, self.handle.clone())?;
-        self.sessions.insert(session_id, new_session);
-        let session_handle_ref = self.sessions.get(&session_id).unwrap();
-        self.daemon_state.add_session(session_id);
-        for c in self.clients.values() {
-            c.new_session(session_id).await?;
-        }
-        Ok(session_handle_ref)
+    async fn create_session(&mut self, session_name: Option<&str>) -> Result<&SessionInfo> {
+        self.state.create_new(session_name)
     }
 
     async fn handle_client_connect(
         &mut self,
         client_id: Uuid,
         client_handle: ClientConnectionHandle,
-        session_id: u32,
+        session_name: Option<&str>,
         create_session: bool,
     ) -> Result<()> {
-        // session doesn't exist and client not trying to create it
-        if !self.sessions.contains_key(&session_id) && !create_session {
-            client_handle
-                .initial_attach_result(Err(eyre::eyre!("no such session")))
-                .await?;
-            return Ok(());
+        let session_name = session_name.ok_or(eyre!("no session name"))?;
+        match self
+            .state
+            .attach_client(client_id, &client_handle, session_name, create_session)
+        {
+            Ok(_) => {
+                let session_info = self.state.get_by_name(session_name).expect("session should exist here");
+                client_handle.initial_attach_result(Ok(self.state.snapshot())).await?;
+                client_handle.success_attach_to_session(session_info.id).await?;
+                session_info.handle.redraw().await?;
+            }
+            Err(e) => {
+                client_handle.initial_attach_result(Err(eyre::eyre!(e))).await?;
+            }
         }
-
-        // session didn't exist
-        if !self.sessions.contains_key(&session_id) {
-            self.create_session(session_id).await?;
-        }
-
-        // session exists
-        let clients = self.session_to_client_mapping.entry(session_id).or_insert(vec![]);
-        for c in self.clients.values() {
-            c.new_session(session_id).await?;
-        }
-        self.clients.insert(client_id, client_handle.clone());
-        clients.push(client_id);
-        self.client_to_session_mapping.insert(client_id, session_id);
-
-        let session_handle = self.sessions.get_mut(&session_id).expect("session should exist here");
-        client_handle
-            .initial_attach_result(Ok(self.daemon_state.clone()))
-            .await?;
-        client_handle.success_attach_to_session(session_id).await?;
-        session_handle.redraw().await?;
         Ok(())
     }
+
     async fn handle_client_disconnect(&mut self, client_id: Uuid) -> Result<()> {
-        let client_handle = self.clients.remove(&client_id);
-        if let Some(session_id) = self.client_to_session_mapping.remove(&client_id)
-            && let Some(clients) = self.session_to_client_mapping.get_mut(&session_id)
-        {
-            clients.retain(|c| c != &client_id);
-        }
-        if let Some(client_handle) = client_handle {
-            client_handle.disconnect().await.unwrap();
-        }
+        // let client_handle = self.clients.remove(&client_id);
+        // if let Some(session_id) = self.client_to_session_mapping.remove(&client_id)
+        //     && let Some(clients) = self.session_to_client_mapping.get_mut(&session_id)
+        // {
+        //     clients.retain(|c| c != &client_id);
+        // }
+        // if let Some(client_handle) = client_handle {
+        //     client_handle.disconnect().await.unwrap();
+        // }
+        todo!();
         Ok(())
     }
-    async fn handle_client_switch_session(&mut self, client_id: Uuid, session_id: u32) -> Result<()> {
-        let client_handle = self.unmap_client(client_id).unwrap();
-        self.map_client(client_id, client_handle, session_id)?;
-        if let Some(session_handle) = self.sessions.get(&session_id) {
-            session_handle.redraw().await?;
-        }
-        let client_handle = self.clients.get(&client_id).unwrap();
-        client_handle.success_attach_to_session(session_id).await?;
-        Ok(())
-    }
+
+    // async fn handle_client_switch_session(&mut self, client_id: Uuid, session_id: u32) -> Result<()> {
+    //     let client_handle = self.unmap_client(client_id).unwrap();
+    //     self.map_client(client_id, client_handle, session_id)?;
+    //     if let Some(session_handle) = self.sessions.get(&session_id) {
+    //         session_handle.redraw().await?;
+    //     }
+    //     let client_handle = self.clients.get(&client_id).unwrap();
+    //     client_handle.success_attach_to_session(session_id).await?;
+    //     Ok(())
+    // }
+
     async fn handle_client_send_user_input(&mut self, client_id: Uuid, bytes: Bytes) -> Result<()> {
-        if let Some(session_id) = self.client_to_session_mapping.get(&client_id) {
-            let session_handle = self.sessions.get_mut(session_id).unwrap();
-            session_handle.user_input(bytes).await
-        } else {
-            Ok(())
-        }
+        self.state
+            .get_session_for_client(&client_id)?
+            .handle
+            .user_input(bytes)
+            .await
     }
+
     async fn handle_client_kill_pane(&mut self, client_id: Uuid) -> Result<()> {
-        if let Some(session_id) = self.client_to_session_mapping.get(&client_id) {
-            let session_handle = self.sessions.get_mut(session_id).unwrap();
-            session_handle.user_kill_pane().await
-        } else {
-            Ok(())
-        }
+        self.state
+            .get_session_for_client(&client_id)?
+            .handle
+            .user_kill_pane()
+            .await
     }
+
     async fn handle_client_split_pane(&mut self, client_id: Uuid, direction: SplitDirection) -> Result<()> {
-        if let Some(session_id) = self.client_to_session_mapping.get(&client_id) {
-            let session_handle = self.sessions.get_mut(session_id).unwrap();
-            session_handle.user_split_pane(direction).await
-        } else {
-            // TODO: should error
-            Ok(())
-        }
+        self.state
+            .get_session_for_client(&client_id)?
+            .handle
+            .user_split_pane(direction)
+            .await
     }
+
     async fn handle_client_iterate_pane(&mut self, client_id: Uuid, is_next: bool) -> Result<()> {
-        if let Some(session_id) = self.client_to_session_mapping.get(&client_id) {
-            let session_handle = self.sessions.get_mut(session_id).unwrap();
-            session_handle.user_iterate_pane(is_next).await
-        } else {
-            // TODO: should error
-            Ok(())
-        }
+        self.state
+            .get_session_for_client(&client_id)?
+            .handle
+            .user_iterate_pane(is_next)
+            .await
     }
+
     async fn handle_session_send_output(&mut self, session_id: u32, bytes: Bytes) -> Result<()> {
-        for client_id in self.session_to_client_mapping.get(&session_id).unwrap() {
-            let client_handle = self.clients.get_mut(client_id).unwrap();
-            client_handle.session_output(bytes.clone()).await?;
+        for client in self.state.get_clients_for_session(&session_id)? {
+            client.session_output(bytes.clone()).await?;
         }
         Ok(())
     }
 
-    fn map_client(&mut self, client_id: Uuid, client_handle: ClientConnectionHandle, session_id: u32) -> Result<()> {
-        self.clients.insert(client_id, client_handle);
-        let clients = self.session_to_client_mapping.entry(session_id).or_insert(vec![]);
-        clients.push(client_id);
-        self.client_to_session_mapping.insert(client_id, session_id);
-        Ok(())
-    }
+    // fn map_client(&mut self, client_id: Uuid, client_handle: ClientConnectionHandle, session_id: u32) -> Result<()> {
+    //     self.clients.insert(client_id, client_handle);
+    //     let clients = self.session_to_client_mapping.entry(session_id).or_insert(vec![]);
+    //     clients.push(client_id);
+    //     self.client_to_session_mapping.insert(client_id, session_id);
+    //     Ok(())
+    // }
 
-    fn unmap_client(&mut self, client_id: Uuid) -> Option<ClientConnectionHandle> {
-        let client_handle = self.clients.remove(&client_id)?;
-        if let Some(session_id) = self.client_to_session_mapping.remove(&client_id)
-            && let Some(clients) = self.session_to_client_mapping.get_mut(&session_id)
-        {
-            clients.retain(|c| c != &client_id);
-        }
-        Some(client_handle)
-    }
+    // fn unmap_client(&mut self, client_id: Uuid) -> Option<ClientConnectionHandle> {
+    //     let client_handle = self.clients.remove(&client_id)?;
+    //     if let Some(session_id) = self.client_to_session_mapping.remove(&client_id)
+    //         && let Some(clients) = self.session_to_client_mapping.get_mut(&session_id)
+    //     {
+    //         clients.retain(|c| c != &client_id);
+    //     }
+    //     Some(client_handle)
+    // }
 }

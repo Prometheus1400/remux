@@ -192,8 +192,8 @@ impl App {
                                 DaemonEvent::ActiveSession(session_id) => {
                                     self.state.daemon.set_active_session(session_id);
                                 }
-                                DaemonEvent::NewSession(session_id) => {
-                                    self.state.daemon.add_session(session_id);
+                                DaemonEvent::NewSession(session_id, session_name) => {
+                                    self.state.daemon.add_session(session_id, session_name);
                                 }
                                 _ => {
                                     todo!();
@@ -241,8 +241,8 @@ impl App {
             match selection {
                 ui::traits::Selection::Index(i) => match self.state.mode {
                     AppMode::SelectingSession => {
-                        let session = self.state.daemon.session_ids[i];
-                        comm::send_event(&mut self.stream, CliEvent::SwitchSession(session)).await?;
+                        let session = &self.state.daemon.sessions[i];
+                        comm::send_event(&mut self.stream, CliEvent::SwitchSession(session.id)).await?;
                     }
                     AppMode::Normal => {}
                 },
@@ -275,12 +275,12 @@ impl App {
                 self.state.mode = AppMode::SelectingSession;
                 self.state.ui.selector.query.clear();
                 self.state.ui.selector.list_state.select(Some(0));
-                self.state.ui.selector.selector_type = SelectorType::Fuzzy;
+                self.state.ui.selector.selector_type = SelectorType::Basic;
                 self.state
                     .ui
                     .selector
                     .list
-                    .extend(self.state.daemon.session_ids.iter().map(|x| x.to_string()));
+                    .extend(self.state.daemon.sessions.iter().map(|x| x.name.clone()));
                 self.state.ui.selector.displaying_list = self
                     .state
                     .ui
