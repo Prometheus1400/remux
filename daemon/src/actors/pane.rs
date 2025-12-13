@@ -1,4 +1,5 @@
 use bytes::Bytes;
+use color_eyre::owo_colors::OwoColorize;
 use handle_macro::Handle;
 use tokio::sync::mpsc;
 use tracing::Instrument;
@@ -7,9 +8,7 @@ use crate::{
     actors::{
         pty::{Pty, PtyHandle},
         window::WindowHandle,
-    },
-    layout::Rect,
-    prelude::*,
+    }, cell::RemuxCell, layout::Rect, prelude::*
 };
 
 #[derive(Handle, Debug)]
@@ -38,6 +37,11 @@ pub struct Pane {
     rx: mpsc::Receiver<PaneEvent>,
     pane_state: PaneState,
     pty_handle: PtyHandle,
+
+    // cells
+    curr_grid: Vec<Vec<RemuxCell>>,
+    prev_grid: Vec<Vec<RemuxCell>>,
+
     // vte related
     vte: vt100::Parser,
     prev_screen_state: Option<vt100::Screen>,
@@ -53,6 +57,8 @@ impl Pane {
         let (tx, rx) = mpsc::channel(10);
         let handle = PaneHandle { tx };
 
+        let curr_grid = vec![vec![RemuxCell::default(); rect.width as usize]; rect.height as usize];
+        let prev_grid = vec![vec![RemuxCell::default(); rect.width as usize]; rect.height as usize];
         let vte = vt100::Parser::new(rect.height, rect.width, 0);
         let pty_handle = Pty::spawn(handle.clone(), rect)?;
         Ok(Self {
@@ -61,6 +67,8 @@ impl Pane {
             window_handle,
             pty_handle,
             rx,
+            curr_grid,
+            prev_grid,
             vte,
             pane_state: PaneState::Visible,
             prev_screen_state: None,
@@ -151,26 +159,64 @@ impl Pane {
         }
     }
 
+    // async fn handle_rerender(&mut self) -> Result<()> {
+    //     let screen = self.vte.screen();
+    //
+    //     self.prev_screen_state = Some(screen.clone());
+    //     let mut output = Vec::new();
+    //
+    //     for (i, row) in screen.rows_formatted(0, self.rect.width).enumerate() {
+    //         let cx = self.rect.x + 1;
+    //         let cy = self.rect.y + 1 + (i as u16);
+    //
+    //         let move_cursor = format!("\x1b[{};{}H", cy, cx);
+    //         output.extend_from_slice(move_cursor.as_bytes());
+    //
+    //         let erase_chars = format!("\x1b[{}X", self.rect.width);
+    //         output.extend_from_slice(erase_chars.as_bytes());
+    //         output.extend_from_slice(&row);
+    //     }
+    //
+    //     output.extend_from_slice(b"\x1b[0m");
+    //
+    //     let (c_row, c_col) = screen.cursor_position();
+    //     let global_x = self.rect.x + 1 + c_col;
+    //     let global_y = self.rect.y + 1 + c_row;
+    //
+    //     self.window_handle
+    //         .pane_output(self.id, Bytes::from(output), Some((global_x, global_y)))
+    //         .await
+    // }
+
+
     async fn handle_rerender(&mut self) -> Result<()> {
         let screen = self.vte.screen();
 
-        trace!("RERENDER -- id: {} size {:?}", self.id, screen.size());
-        self.prev_screen_state = Some(screen.clone());
-        let mut output = Vec::new();
+        let rows = self.rect.height as usize;
+        let cols = self.rect.width as usize;
 
-        for (i, row) in screen.rows_formatted(0, self.rect.width).enumerate() {
-            let cx = self.rect.x + 1;
-            let cy = self.rect.y + 1 + (i as u16);
+        let mut new_grid: Vec<Vec<RemuxCell>> = vec![vec![RemuxCell::default(); cols]; rows];
 
-            let move_cursor = format!("\x1b[{};{}H", cy, cx);
-            output.extend_from_slice(move_cursor.as_bytes());
-
-            let erase_chars = format!("\x1b[{}X", self.rect.width);
-            output.extend_from_slice(erase_chars.as_bytes());
-            output.extend_from_slice(&row);
+        for r in 0..rows {
+            for c in 0..cols {
+                if let Some(cell) = screen.cell(r as u16, c as u16) {
+                    new_grid[r][c] = RemuxCell {
+                        contents: cell.contents().as_bytes().to_vec(),
+                        fg_color: cell.fgcolor(),
+                        bg_color: cell.bgcolor(),
+                        bold: cell.bold(),
+                        italic: cell.italic(),
+                        underline: cell.underline(),
+                        is_wide: cell.is_wide(),
+                        is_wide_spacer: cell.is_wide_continuation()
+                    }
+                }
+            }
         }
 
-        output.extend_from_slice(b"\x1b[0m");
+        self.curr_grid = new_grid;
+
+        let output = RemuxCell::render_diff(&self.prev_grid, &self.curr_grid, true);
 
         let (c_row, c_col) = screen.cursor_position();
         let global_x = self.rect.x + 1 + c_col;

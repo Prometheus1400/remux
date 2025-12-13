@@ -146,7 +146,7 @@ impl App {
                 self.state.terminal.emulator.set_size(rows, cols);
                 self.state.terminal.needs_resize = false;
                 let (rows, cols) = self.state.terminal.size;
-                comm::send_event(&mut self.stream, CliEvent::TerminalResize { rows, cols }).await?;
+                comm::send_event(&mut self.stream, CliEvent::WindowResize { rows, cols }).await?;
             }
             tokio::select! {
                 Some(input) = input_rx.recv() => {

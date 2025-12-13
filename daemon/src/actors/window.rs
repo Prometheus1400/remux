@@ -31,7 +31,7 @@ pub enum WindowEvent {
     },
     KillPane,
     Redraw,
-    TerminalResize {
+    WindowResize {
         rows: u16,
         cols: u16,
     },
@@ -76,6 +76,7 @@ impl Window {
         let init_pane_id = 0;
         let init_layout_node = LayoutNode::Pane { id: init_pane_id };
 
+        // Default size, overridden when client connects and send new size
         let (cols, rows) = (80, 24);
         let root_rect = Rect {
             x: 0,
@@ -146,17 +147,8 @@ impl Window {
                                 }
                                 break;
                             }
-                            TerminalResize { rows, cols } => {
-                                for pane in self.panes.values_mut() {
-                                    pane.resize(Rect {
-                                        x: 0,
-                                        y: 0,
-                                        width: cols,
-                                        height: rows,
-                                    })
-                                    .await
-                                    .unwrap();
-                                }
+                            WindowResize { rows, cols } => {
+                                self.handle_window_resize(rows, cols).await.unwrap();
                             }
                         }
                     }
@@ -311,6 +303,36 @@ impl Window {
             .await?;
         self.handle_redraw().await?;
 
+        Ok(())
+    }
+    async fn handle_window_resize(&mut self, rows: u16, cols: u16) -> Result<()> {
+        self.root_rect = Rect {
+            x: 0,
+            y: 0,
+            width: cols,
+            height: rows,
+        };
+
+        self.layout.calculate_layout(self.root_rect, &mut self.layout_sizing_map)?;
+
+        for (id, pane) in self.panes.iter() {
+            if let Some(new_rect) = self.layout_sizing_map.get(id) {
+                pane.resize(*new_rect).await?;
+            }
+        }
+
+        for pane in self.panes.values_mut() {
+            pane.resize(Rect {
+                x: 0,
+                y: 0,
+                width: cols,
+                height: rows,
+            })
+                .await
+                .unwrap();
+        }
+
+        self.handle_redraw().await?;
         Ok(())
     }
 }

@@ -30,7 +30,7 @@ pub enum SessionEvent {
 
     // output
     WindowOutput(Bytes),
-    TerminalResize { rows: u16, cols: u16 },
+    WindowResize { rows: u16, cols: u16 },
     Kill,
 }
 use SessionEvent::*;
@@ -102,8 +102,8 @@ impl Session {
                                 self.window_handle.kill().await.unwrap();
                                 break;
                             }
-                            TerminalResize { rows, cols } => {
-                                self.window_handle.terminal_resize(rows, cols).await.unwrap();
+                            WindowResize { rows, cols } => {
+                                self.window_handle.window_resize(rows, cols).await.unwrap();
                             }
                             RenameSession(name) => {
                                 let span = Span::current();
