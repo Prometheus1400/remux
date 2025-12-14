@@ -1,10 +1,10 @@
 use crate::{layout::Rect, prelude::*};
 use std::io::Write;
-const CONTENT_LENGTH: usize = 22; // size of vt100 cell content
+pub const CONTENT_LENGTH: usize = 22; // size of vt100 cell content
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct RemuxCell {
-    pub contents: Vec<u8>, // change to fixed array
+    pub contents: [u8; CONTENT_LENGTH], // change to fixed array
     pub fg_color: vt100::Color,
     pub bg_color: vt100::Color,
 
@@ -19,8 +19,10 @@ pub struct RemuxCell {
 
 impl Default for RemuxCell {
     fn default() -> Self {
+        let mut content = [0u8; CONTENT_LENGTH];
+        content[0] = b' ';
         Self {
-            contents: Default::default(),
+            contents: content,
             fg_color: vt100::Color::Default,
             bg_color: vt100::Color::Default,
             bold: false,
@@ -33,7 +35,7 @@ impl Default for RemuxCell {
 }
 
 impl RemuxCell {
-    pub fn render_diff(rect: Rect, prev_grid: &Vec<Vec<RemuxCell>>, curr_grid: &Vec<Vec<RemuxCell>>, is_rerender: bool) -> Vec<u8> {
+    pub fn render_diff(rect: Rect, prev_grid: &Vec<Vec<RemuxCell>>, curr_grid: &Vec<Vec<RemuxCell>>, force_rerender: bool) -> Vec<u8> {
         let mut output = Vec::new();
         let mut current_fg_color = vt100::Color::Default;
         let mut current_bg_color = vt100::Color::Default;
@@ -49,7 +51,7 @@ impl RemuxCell {
                 }
 
                 // if the cell hasn't changed, skip it.
-                if !is_rerender && r < prev_grid.len() && c < prev_grid[0].len() {
+                if !force_rerender && r < prev_grid.len() && c < prev_grid[0].len() {
                     if cell.eq(&prev_grid[r][c]) {
                         continue;
                     }

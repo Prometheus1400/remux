@@ -8,14 +8,13 @@ use crate::{
     actors::{
         pty::{Pty, PtyHandle},
         window::WindowHandle,
-    }, cell::RemuxCell, layout::Rect, prelude::*
+    }, cell::{CONTENT_LENGTH, RemuxCell}, layout::Rect, prelude::*
 };
 
 #[derive(Handle, Debug)]
 pub enum PaneEvent {
     UserInput(Bytes),
     PtyOutput(Bytes),
-    PtyDied,
     Render,   // uses the diff from prev state to get to desired state (falls back to rerender if no prev state)
     Rerender, // full rerender
     Resize { rect: Rect },
@@ -39,6 +38,7 @@ pub struct Pane {
     pty_handle: PtyHandle,
 
     // cells
+    force_rerender: bool,
     curr_grid: Vec<Vec<RemuxCell>>,
 
     // vte related
@@ -65,6 +65,7 @@ impl Pane {
             window_handle,
             pty_handle,
             rx,
+            force_rerender: true,
             curr_grid,
             vte,
             pane_state: PaneState::Visible,
@@ -95,11 +96,9 @@ impl Pane {
                                     error!("Error while handling PTY output: {}", e);
                                 }
                             }
-                            PtyDied => {
-                                break;
-                            }
                             Kill => {
                                 self.pty_handle.kill().await.unwrap();
+                                debug!("Pty died");
                                 break;
                             }
                             Render => {
@@ -197,8 +196,21 @@ impl Pane {
         for r in 0..rows {
             for c in 0..cols {
                 if let Some(cell) = screen.cell(r as u16, c as u16) {
+                    let content_str = cell.contents();
+                    let bytes = content_str.as_bytes();
+
+                    let mut content_buf = [0u8; CONTENT_LENGTH];
+                    if bytes.is_empty() || bytes[0] == 0 {
+                        content_buf[0] = b' ';
+                    } else {
+                        let len = bytes.len().min(CONTENT_LENGTH);
+                        content_buf[..len].copy_from_slice(&bytes[..len]);
+                    }
+
+                    let len = bytes.len().min(CONTENT_LENGTH);
+                    content_buf[..len].copy_from_slice(&bytes[..len]);
                     new_grid[r][c] = RemuxCell {
-                        contents: cell.contents().as_bytes().to_vec(),
+                        contents: content_buf,
                         fg_color: cell.fgcolor(),
                         bg_color: cell.bgcolor(),
                         bold: cell.bold(),
@@ -212,8 +224,9 @@ impl Pane {
         }
 
 
-        let output = RemuxCell::render_diff(self.rect, &self.curr_grid, &new_grid, true);
+        let output = RemuxCell::render_diff(self.rect, &self.curr_grid, &new_grid, self.force_rerender);
         self.curr_grid = new_grid;
+        self.force_rerender = false;
 
         let (c_row, c_col) = screen.cursor_position();
         let global_x = self.rect.x + 1 + c_col;
@@ -229,7 +242,7 @@ impl Pane {
         self.pty_handle.resize(rect).await?;
         self.vte.set_size(rect.height, rect.width);
 
-        self.handle_rerender().await?;
+        self.force_rerender = true;
         Ok(())
     }
 }
