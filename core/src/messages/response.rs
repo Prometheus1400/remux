@@ -1,10 +1,11 @@
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
-use crate::{messages::traits::Message, rand, states::DaemonState};
+use crate::{messages::traits::Message, states::DaemonState};
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 pub struct ResponseMessage<T> {
-    pub id: u32,
+    pub id: Uuid,
     pub result: ResponseResult<T>,
 }
 impl<T: Serialize + for<'de> Deserialize<'de>> Message for ResponseMessage<T> {}
@@ -29,14 +30,14 @@ pub struct ResultUnset;
 pub type ResultSet<T> = ResponseResult<T>;
 
 pub struct ResponseBuilder<ResultState> {
-    id: u32,
+    id: Uuid,
     result: ResultState,
 }
 
 impl Default for ResponseBuilder<ResultUnset> {
     fn default() -> Self {
         Self {
-            id: rand::generate_id(),
+            id: Uuid::new_v4(),
             result: ResultUnset,
         }
     }

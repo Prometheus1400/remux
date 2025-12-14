@@ -118,7 +118,10 @@ impl ClientConnection {
                                     comm::send_event(&mut self.stream, DaemonEvent::Disconnected).await.unwrap();
                                 }
                                 SessionOutput(bytes) => {
-                                    comm::send_event(&mut self.stream, DaemonEvent::Raw(bytes)).await.unwrap();
+                                    let chunk_size = 1024;
+                                    for chunk in bytes.chunks(chunk_size) {
+                                        comm::send_event(&mut self.stream, DaemonEvent::Raw(Bytes::copy_from_slice(chunk))).await.unwrap();
+                                    }
                                 }
                                 NewSession(session_id, session_name) => {
                                     comm::send_event(&mut self.stream, DaemonEvent::NewSession(session_id, session_name)).await.unwrap();

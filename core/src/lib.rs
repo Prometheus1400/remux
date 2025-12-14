@@ -5,5 +5,4 @@ pub mod error;
 pub mod events;
 pub mod messages;
 mod prelude;
-pub mod rand;
 pub mod states;

@@ -1,19 +1,16 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::{
-    messages::{
-        response,
-        traits::{Message, RequestBody},
-    },
-    rand,
+use crate::messages::{
+    response,
+    traits::{Message, RequestBody},
 };
 
 // --------- serialized from the client ---------  //
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 pub struct CliRequestMessage<T: RequestBody> {
-    pub id: u32,
+    pub id: Uuid,
     pub body: T,
 }
 impl<T: RequestBody + Serialize + for<'de> Deserialize<'de>> Message for CliRequestMessage<T> {}
@@ -22,7 +19,7 @@ impl<T: RequestBody + Serialize + for<'de> Deserialize<'de>> Message for CliRequ
 
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
 pub struct DaemonRequestMessage {
-    pub id: u32,
+    pub id: Uuid,
     pub body: DaemonRequestMessageBody,
 }
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
@@ -51,14 +48,14 @@ pub type BodySet<T> = T;
 
 #[derive(Debug)]
 pub struct RequestBuilder<BodyState> {
-    id: u32,
+    id: Uuid,
     body: BodyState,
 }
 
 impl Default for RequestBuilder<BodyUnset> {
     fn default() -> Self {
         Self {
-            id: rand::generate_id(),
+            id: Uuid::new_v4(),
             body: BodyUnset,
         }
     }
