@@ -1,4 +1,4 @@
-use crate::prelude::*;
+use crate::{layout::Rect, prelude::*};
 use std::io::Write;
 const CONTENT_LENGTH: usize = 22; // size of vt100 cell content
 
@@ -33,7 +33,7 @@ impl Default for RemuxCell {
 }
 
 impl RemuxCell {
-    pub fn render_diff(prev_grid: &Vec<Vec<RemuxCell>>, curr_grid: &Vec<Vec<RemuxCell>>, is_rerender: bool) -> Vec<u8> {
+    pub fn render_diff(rect: Rect, prev_grid: &Vec<Vec<RemuxCell>>, curr_grid: &Vec<Vec<RemuxCell>>, is_rerender: bool) -> Vec<u8> {
         let mut output = Vec::new();
         let mut current_fg_color = vt100::Color::Default;
         let mut current_bg_color = vt100::Color::Default;
@@ -55,9 +55,12 @@ impl RemuxCell {
                     }
                 }
 
+                let target_x = rect.x + 1 + c as u16;
+                let target_y = rect.y + 1 + r as u16;
+
                 // if the cursor is not currently at this cell, move it there
                 if cursor_invalid || cursor_y != r || cursor_x != c {
-                    write!(output, "\x1b[{};{}H", r + 1, c + 1).unwrap(); // terminals are 1-indexed
+                    write!(output, "\x1b[{};{}H", target_y, target_x).unwrap(); // terminals are 1-indexed
                     cursor_y = r;
                     cursor_x = c;
                     cursor_invalid = false;

@@ -40,7 +40,6 @@ pub struct Pane {
 
     // cells
     curr_grid: Vec<Vec<RemuxCell>>,
-    prev_grid: Vec<Vec<RemuxCell>>,
 
     // vte related
     vte: vt100::Parser,
@@ -58,7 +57,6 @@ impl Pane {
         let handle = PaneHandle { tx };
 
         let curr_grid = vec![vec![RemuxCell::default(); rect.width as usize]; rect.height as usize];
-        let prev_grid = vec![vec![RemuxCell::default(); rect.width as usize]; rect.height as usize];
         let vte = vt100::Parser::new(rect.height, rect.width, 0);
         let pty_handle = Pty::spawn(handle.clone(), rect)?;
         Ok(Self {
@@ -68,7 +66,6 @@ impl Pane {
             pty_handle,
             rx,
             curr_grid,
-            prev_grid,
             vte,
             pane_state: PaneState::Visible,
             prev_screen_state: None,
@@ -214,9 +211,9 @@ impl Pane {
             }
         }
 
-        self.curr_grid = new_grid;
 
-        let output = RemuxCell::render_diff(&self.prev_grid, &self.curr_grid, true);
+        let output = RemuxCell::render_diff(self.rect, &self.curr_grid, &new_grid, true);
+        self.curr_grid = new_grid;
 
         let (c_row, c_col) = screen.cursor_position();
         let global_x = self.rect.x + 1 + c_col;
