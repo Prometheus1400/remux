@@ -1,13 +1,18 @@
+use std::time::Duration;
+
 use bytes::Bytes;
 use handle_macro::Handle;
-use tokio::sync::mpsc;
+use tokio::{sync::mpsc, time::MissedTickBehavior};
 use tracing::Instrument;
 
 use crate::{
     actors::{
         pty::{Pty, PtyHandle},
         window::WindowHandle,
-    }, cell::{CONTENT_LENGTH, RemuxCell}, layout::Rect, prelude::*
+    },
+    cell::{CONTENT_LENGTH, RemuxCell, SPACE},
+    layout::Rect,
+    prelude::*,
 };
 
 #[derive(Handle, Debug)]
@@ -74,46 +79,71 @@ impl Pane {
     }
     fn run(mut self) -> Result<PaneHandle> {
         let handle_clone = self.handle.clone();
+
+        let mut render_ticker = tokio::time::interval(Duration::from_millis(16)); // 60 fps
+        render_ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
+
+        let mut is_dirty = true;
         let _task = tokio::spawn(
             async move {
                 loop {
-                    if let Some(event) = self.rx.recv().await {
-                        match &event {
-                            UserInput(..) | PtyOutput(..) => {
-                                trace!(event=?event);
-                            }
-                            _ => {
-                                info!(event=?event);
+                    tokio::select! {
+                        _ = render_ticker.tick() => {
+                            if self.force_rerender || is_dirty {
+                                if let Err(e) = self.handle_render().await {
+                                    error!("Failed to render frame: {e}")
+                                }
+                                is_dirty = false;
                             }
                         }
-                        match event {
-                            UserInput(bytes) => {
-                                self.handle_input(bytes).await.unwrap();
-                            }
-                            PtyOutput(bytes) => {
-                                if let Err(e) = self.handle_pty_output(bytes).await {
-                                    error!("Error while handling PTY output: {}", e);
+                        event_result = self.rx.recv() => {
+                            match event_result {
+                                Some(event) => {
+                                    match &event {
+                                        UserInput(..) | PtyOutput(..) => {
+                                            trace!(event=?event);
+                                        }
+                                        _ => {
+                                            info!(event=?event);
+                                        }
+                                    }
+                                    match event {
+                                        UserInput(bytes) => {
+                                            self.handle_input(bytes).await.unwrap();
+                                        }
+                                        PtyOutput(bytes) => {
+                                            if let Err(e) = self.handle_pty_output(bytes).await {
+                                                error!("Error while handling PTY output: {}", e);
+                                            }
+                                            is_dirty = true;
+                                        }
+                                        Kill => {
+                                            self.pty_handle.kill().await.unwrap();
+                                            debug!("Pty died");
+                                            break;
+                                        }
+                                        Render => {
+                                            is_dirty = true;
+                                        }
+                                        Rerender => {
+                                            self.force_rerender = true;
+                                        }
+                                        Resize { rect } => {
+                                            self.handle_resize(rect).await.unwrap();
+                                            self.force_rerender = true;
+                                        }
+                                        Hide => {
+                                            self.pane_state = PaneState::Hidden;
+                                        }
+                                        Reveal => {
+                                            self.pane_state = PaneState::Visible;
+                                        }
+                                    }
                                 }
-                            }
-                            Kill => {
-                                self.pty_handle.kill().await.unwrap();
-                                debug!("Pty died");
-                                break;
-                            }
-                            Render => {
-                                self.handle_render().await.unwrap();
-                            }
-                            Rerender => {
-                                self.handle_rerender().await.unwrap();
-                            }
-                            Resize { rect } => {
-                                self.handle_resize(rect).await.unwrap();
-                            }
-                            Hide => {
-                                self.pane_state = PaneState::Hidden;
-                            }
-                            Reveal => {
-                                self.pane_state = PaneState::Visible;
+                                None => {
+                                    error!("Channel closed");
+                                    break;
+                                }
                             }
                         }
                     }
@@ -132,59 +162,10 @@ impl Pane {
 
     async fn handle_pty_output(&mut self, bytes: Bytes) -> Result<()> {
         self.vte.process(&bytes);
-        self.handle_rerender().await
+        Ok(())
     }
 
-    // TODO: below code is bad and unused, need better diffing solution
     async fn handle_render(&mut self) -> Result<()> {
-        match &self.prev_screen_state {
-            Some(prev) => {
-                let cur_screen_state = self.vte.screen();
-                let diff = cur_screen_state.state_diff(prev);
-                self.prev_screen_state = Some(cur_screen_state.clone());
-                let (c_row, c_col) = cur_screen_state.cursor_position();
-                let global_x = self.rect.x + 1 + c_col;
-                let global_y = self.rect.y + 1 + c_row;
-                Ok(self
-                    .window_handle
-                    .pane_output(self.id, Bytes::copy_from_slice(&diff), Some((global_x, global_y)))
-                    .await?)
-            }
-            None => self.handle_rerender().await,
-        }
-    }
-
-    // async fn handle_rerender(&mut self) -> Result<()> {
-    //     let screen = self.vte.screen();
-    //
-    //     self.prev_screen_state = Some(screen.clone());
-    //     let mut output = Vec::new();
-    //
-    //     for (i, row) in screen.rows_formatted(0, self.rect.width).enumerate() {
-    //         let cx = self.rect.x + 1;
-    //         let cy = self.rect.y + 1 + (i as u16);
-    //
-    //         let move_cursor = format!("\x1b[{};{}H", cy, cx);
-    //         output.extend_from_slice(move_cursor.as_bytes());
-    //
-    //         let erase_chars = format!("\x1b[{}X", self.rect.width);
-    //         output.extend_from_slice(erase_chars.as_bytes());
-    //         output.extend_from_slice(&row);
-    //     }
-    //
-    //     output.extend_from_slice(b"\x1b[0m");
-    //
-    //     let (c_row, c_col) = screen.cursor_position();
-    //     let global_x = self.rect.x + 1 + c_col;
-    //     let global_y = self.rect.y + 1 + c_row;
-    //
-    //     self.window_handle
-    //         .pane_output(self.id, Bytes::from(output), Some((global_x, global_y)))
-    //         .await
-    // }
-
-
-    async fn handle_rerender(&mut self) -> Result<()> {
         let screen = self.vte.screen();
 
         let rows = self.rect.height as usize;
@@ -200,7 +181,7 @@ impl Pane {
 
                     let mut content_buf = [0u8; CONTENT_LENGTH];
                     if bytes.is_empty() || bytes[0] == 0 {
-                        content_buf[0] = b' ';
+                        content_buf[0] = SPACE;
                     } else {
                         let len = bytes.len().min(CONTENT_LENGTH);
                         content_buf[..len].copy_from_slice(&bytes[..len]);
@@ -209,16 +190,15 @@ impl Pane {
                         contents: content_buf,
                         fg_color: cell.fgcolor(),
                         bg_color: cell.bgcolor(),
-                        bold: cell.bold(),
-                        italic: cell.italic(),
-                        underline: cell.underline(),
-                        is_wide: cell.is_wide(),
-                        is_wide_spacer: cell.is_wide_continuation()
+                        // bold: cell.bold(),
+                        // italic: cell.italic(),
+                        // underline: cell.underline(),
+                        // is_wide: cell.is_wide(),
+                        // is_wide_spacer: cell.is_wide_continuation()
                     }
                 }
             }
         }
-
 
         let output = RemuxCell::render_diff(self.rect, &self.curr_grid, &new_grid, self.force_rerender);
         self.curr_grid = new_grid;
@@ -237,8 +217,6 @@ impl Pane {
         self.rect = rect;
         self.pty_handle.resize(rect).await?;
         self.vte.set_size(rect.height, rect.width);
-
-        self.force_rerender = true;
         Ok(())
     }
 }

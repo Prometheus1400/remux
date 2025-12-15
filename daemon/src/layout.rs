@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use crate::prelude::*;
 
@@ -96,7 +96,7 @@ impl LayoutNode {
         }
     }
 
-    pub fn calculate_layout(&self, area: Rect, results: &mut HashMap<usize, Rect>) -> Result<()> {
+    pub fn calculate_layout(&self, area: Rect, results: &mut BTreeMap<usize, Rect>) -> Result<()> {
         match self {
             LayoutNode::Pane { id } => {
                 results.insert(*id, area);
