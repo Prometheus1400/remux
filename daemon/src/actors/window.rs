@@ -1,7 +1,6 @@
 use std::{collections::HashMap, mem};
 
 use bytes::Bytes;
-use crossterm::terminal;
 use handle_macro::Handle;
 use tokio::sync::mpsc;
 use tracing::Instrument;
@@ -245,11 +244,6 @@ impl Window {
             }
         }
 
-        // self.session_handle
-        //     .window_output(Bytes::from(
-        //         crossterm::terminal::Clear(crossterm::terminal::ClearType::All).to_string(),
-        //     ))
-        //     .await?;
         self.handle_redraw().await?;
         Ok(())
     }
@@ -296,13 +290,7 @@ impl Window {
             }
         }
 
-        self.session_handle
-            .window_output(Bytes::from(
-                crossterm::terminal::Clear(crossterm::terminal::ClearType::All).to_string(),
-            ))
-            .await?;
         self.handle_redraw().await?;
-
         Ok(())
     }
     async fn handle_window_resize(&mut self, rows: u16, cols: u16) -> Result<()> {

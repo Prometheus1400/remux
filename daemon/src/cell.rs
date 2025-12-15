@@ -41,11 +41,42 @@ impl RemuxCell {
         let mut current_bg_color = vt100::Color::Default;
 
         let mut cursor_y = 0;
-        let mut cursor_x = 0; 
-        let mut cursor_invalid = true; // Force a move on first draw
+        let mut cursor_x = 0;
+        let mut cursor_invalid = true;
 
         for (r, row) in curr_grid.iter().enumerate() {
+            // get the last useful column using a reverse path
+            let mut last_char_index = 0;
+            for (c, cell) in row.iter().enumerate().rev() {
+                let is_space = cell.contents[0] == b' ';
+                let is_default_bg = cell.bg_color == vt100::Color::Default;
+                let has_attributes = cell.bold || cell.italic || cell.underline || cell.is_wide || cell.is_wide_spacer;
+
+                if !is_space || !is_default_bg || has_attributes {
+                    last_char_index = c + 1;
+                    break;
+                }
+            }
+
+            // diff with forward pass
             for (c, cell) in row.iter().enumerate() {
+                if c >= last_char_index {
+                    if cursor_invalid || cursor_y != r || cursor_x != c {
+                        write!(output, "\x1b[{};{}H", rect.y + 1 + r as u16, rect.x + 1 + c as u16).unwrap();
+                        cursor_y = r;
+                        cursor_x = c;
+                        cursor_invalid = false;
+                    }
+
+                    if current_bg_color != vt100::Color::Default {
+                        write!(output, "\x1b[49m").unwrap();
+                        current_bg_color = vt100::Color::Default;
+                    }
+
+                    output.extend_from_slice(b"\x1b[K");
+                    break; 
+                }
+
                 if cell.is_wide_spacer {
                     continue;
                 }

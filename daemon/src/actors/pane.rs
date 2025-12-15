@@ -1,5 +1,4 @@
 use bytes::Bytes;
-use color_eyre::owo_colors::OwoColorize;
 use handle_macro::Handle;
 use tokio::sync::mpsc;
 use tracing::Instrument;
@@ -206,9 +205,6 @@ impl Pane {
                         let len = bytes.len().min(CONTENT_LENGTH);
                         content_buf[..len].copy_from_slice(&bytes[..len]);
                     }
-
-                    let len = bytes.len().min(CONTENT_LENGTH);
-                    content_buf[..len].copy_from_slice(&bytes[..len]);
                     new_grid[r][c] = RemuxCell {
                         contents: content_buf,
                         fg_color: cell.fgcolor(),
