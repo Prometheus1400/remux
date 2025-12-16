@@ -43,7 +43,8 @@ pub struct Pane {
 
     // cells
     force_rerender: bool,
-    curr_grid: Vec<Vec<RemuxCell>>,
+    curr_grid: Vec<RemuxCell>,
+    prev_grid: Vec<RemuxCell>,
 
     // vte related
     vte: vt100::Parser,
@@ -59,7 +60,10 @@ impl Pane {
         let (tx, rx) = mpsc::channel(10);
         let handle = PaneHandle { tx };
 
-        let curr_grid = vec![vec![RemuxCell::default(); rect.width as usize]; rect.height as usize];
+        let total_cells = (rect.width * rect.height) as usize;
+        let curr_grid = vec![RemuxCell::default(); total_cells];
+        let prev_grid = vec![RemuxCell::default(); total_cells];
+
         let vte = vt100::Parser::new(rect.height, rect.width, 0);
         let pty_handle = Pty::spawn(handle.clone(), rect)?;
         Ok(Self {
@@ -70,6 +74,7 @@ impl Pane {
             rx,
             force_rerender: true,
             curr_grid,
+            prev_grid,
             vte,
             pane_state: PaneState::Visible,
             rect,
@@ -87,11 +92,13 @@ impl Pane {
                 loop {
                     tokio::select! {
                         _ = render_ticker.tick() => {
-                            if self.force_rerender || is_dirty {
-                                if let Err(e) = self.handle_render().await {
-                                    error!("Failed to render frame: {e}")
+                            if let PaneState::Visible = self.pane_state {
+                                if self.force_rerender || is_dirty {
+                                    if let Err(e) = self.handle_render().await {
+                                        error!("Failed to render frame: {e}")
+                                    }
+                                    is_dirty = false;
                                 }
-                                is_dirty = false;
                             }
                         }
                         event_result = self.rx.recv() => {
@@ -147,7 +154,7 @@ impl Pane {
                     }
                 }
             }
-            .in_current_span(),
+                .in_current_span(),
         );
 
         Ok(handle_clone)
@@ -165,32 +172,34 @@ impl Pane {
 
     async fn handle_render(&mut self) -> Result<()> {
         let screen = self.vte.screen();
-
         let rows = self.rect.height as usize;
         let cols = self.rect.width as usize;
 
-        let mut new_grid: Vec<Vec<RemuxCell>> = vec![vec![RemuxCell::default(); cols]; rows];
+        let total_cells = rows * cols;
+        if self.curr_grid.len() != total_cells {
+            self.curr_grid.resize(total_cells, RemuxCell::default());
+        }
+        if self.prev_grid.len() != total_cells {
+            self.prev_grid.resize(total_cells, RemuxCell::default());
+        }
 
         for r in 0..rows {
             for c in 0..cols {
+                let idx = r * cols + c;
+                let remux_cell = &mut self.curr_grid[idx];
                 if let Some(cell) = screen.cell(r as u16, c as u16) {
-                    let mut remux_cell = RemuxCell::default();
-
-                    let content_str = cell.contents();
-                    let bytes = content_str.as_bytes();
-
-                    remux_cell.set_content(bytes);
+                    remux_cell.set_content(cell.contents().as_bytes());
                     remux_cell.set_fg_color(cell.fgcolor());
                     remux_cell.set_bg_color(cell.bgcolor());
                     remux_cell.set_attributes_from_vt100(cell);
-
-                    new_grid[r][c] = remux_cell;
+                } else {
+                    *remux_cell = RemuxCell::default();
                 }
             }
         }
 
-        let output = RemuxCell::render_diff(self.rect, &self.curr_grid, &new_grid, self.force_rerender);
-        self.curr_grid = new_grid;
+        let output = RemuxCell::render_diff(self.rect, &self.prev_grid, &self.curr_grid, self.force_rerender);
+        std::mem::swap(&mut self.prev_grid, &mut self.curr_grid);
         self.force_rerender = false;
 
         let (c_row, c_col) = screen.cursor_position();
@@ -204,6 +213,11 @@ impl Pane {
 
     async fn handle_resize(&mut self, rect: Rect) -> Result<()> {
         self.rect = rect;
+
+        let new_size = (rect.width * rect.height) as usize;
+        self.prev_grid.resize(new_size, RemuxCell::default());
+        self.curr_grid.resize(new_size, RemuxCell::default());
+
         self.pty_handle.resize(rect).await?;
         self.vte.set_size(rect.height, rect.width);
         Ok(())
