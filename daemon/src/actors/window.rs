@@ -183,7 +183,6 @@ impl Window {
     }
     async fn handle_redraw(&mut self) -> Result<()> {
         for pane in self.panes.iter() {
-            debug!("RENDERING PANE {}", pane.0);
             pane.1.rerender().await?;
         }
         Ok(())

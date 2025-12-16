@@ -10,7 +10,7 @@ use crate::{
         pty::{Pty, PtyHandle},
         window::WindowHandle,
     },
-    cell::{CONTENT_LENGTH, RemuxCell, SPACE},
+    cell::RemuxCell,
     layout::Rect,
     prelude::*,
 };
@@ -47,7 +47,6 @@ pub struct Pane {
 
     // vte related
     vte: vt100::Parser,
-    prev_screen_state: Option<vt100::Screen>,
     rect: Rect,
 }
 impl Pane {
@@ -73,7 +72,6 @@ impl Pane {
             curr_grid,
             vte,
             pane_state: PaneState::Visible,
-            prev_screen_state: None,
             rect,
         })
     }
@@ -176,26 +174,17 @@ impl Pane {
         for r in 0..rows {
             for c in 0..cols {
                 if let Some(cell) = screen.cell(r as u16, c as u16) {
+                    let mut remux_cell = RemuxCell::default();
+
                     let content_str = cell.contents();
                     let bytes = content_str.as_bytes();
 
-                    let mut content_buf = [0u8; CONTENT_LENGTH];
-                    if bytes.is_empty() || bytes[0] == 0 {
-                        content_buf[0] = SPACE;
-                    } else {
-                        let len = bytes.len().min(CONTENT_LENGTH);
-                        content_buf[..len].copy_from_slice(&bytes[..len]);
-                    }
-                    new_grid[r][c] = RemuxCell {
-                        contents: content_buf,
-                        fg_color: cell.fgcolor(),
-                        bg_color: cell.bgcolor(),
-                        // bold: cell.bold(),
-                        // italic: cell.italic(),
-                        // underline: cell.underline(),
-                        // is_wide: cell.is_wide(),
-                        // is_wide_spacer: cell.is_wide_continuation()
-                    }
+                    remux_cell.set_content(bytes);
+                    remux_cell.set_fg_color(cell.fgcolor());
+                    remux_cell.set_bg_color(cell.bgcolor());
+                    remux_cell.set_attributes_from_vt100(cell);
+
+                    new_grid[r][c] = remux_cell;
                 }
             }
         }
