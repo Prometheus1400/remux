@@ -44,10 +44,11 @@ impl Default for RemuxCell {
 // equality checks integers first, then compares contents
 impl PartialEq for RemuxCell {
     fn eq(&self, other: &Self) -> bool {
-        if self.len != other.len 
+        if self.len != other.len
             || self.fg_color != other.fg_color
             || self.bg_color != other.bg_color
-            || self.attributes != other.attributes {
+            || self.attributes != other.attributes
+        {
             return false;
         }
 
@@ -81,7 +82,6 @@ impl RemuxCell {
         const VISIBLE_ON_WHITESPACE: u8 = INVERSE | UNDERLINE;
 
         for r in 0..rows {
-
             // first pass is a backwards pass to find the last index with a visible change
             // we use this to clear empty space
             let mut last_char_index = 0;
@@ -211,8 +211,6 @@ impl RemuxCell {
         output
     }
 
-
-
     // adds all attributes from RemuxCell as ANSI codes
     fn get_attributes_to_ansi(buffer: &mut Vec<u8>, cell: &RemuxCell) {
         if cell.has_attribute(BOLD) {
@@ -276,7 +274,6 @@ impl RemuxCell {
         self.bg_color = color_to_bytes(color);
     }
 }
-
 
 // helper functions
 // push_u8 is faster than write!() due to under-the-hood Rust stuff
@@ -349,19 +346,31 @@ fn u32_color_to_ansi(output: &mut Vec<u8>, color: u32, is_fg: bool) {
     let val3 = (color & 0xFF) as u8;
 
     match color_type {
-        0 => { // Default
-            if is_fg { output.extend_from_slice(b"\x1b[39m"); } 
-            else { output.extend_from_slice(b"\x1b[49m"); }
+        0 => {
+            // Default
+            if is_fg {
+                output.extend_from_slice(b"\x1b[39m");
+            } else {
+                output.extend_from_slice(b"\x1b[49m");
+            }
         }
-        1 => { // Indexed
-            if is_fg { output.extend_from_slice(b"\x1b[38;5;"); } 
-            else { output.extend_from_slice(b"\x1b[48;5;"); }
+        1 => {
+            // Indexed
+            if is_fg {
+                output.extend_from_slice(b"\x1b[38;5;");
+            } else {
+                output.extend_from_slice(b"\x1b[48;5;");
+            }
             push_u8(output, val1);
             output.push(b'm');
         }
-        2 => { // RGB
-            if is_fg { output.extend_from_slice(b"\x1b[38;2;"); } 
-            else { output.extend_from_slice(b"\x1b[48;2;"); }
+        2 => {
+            // RGB
+            if is_fg {
+                output.extend_from_slice(b"\x1b[38;2;");
+            } else {
+                output.extend_from_slice(b"\x1b[48;2;");
+            }
             push_u8(output, val1);
             output.push(b';');
             push_u8(output, val2);
@@ -372,4 +381,3 @@ fn u32_color_to_ansi(output: &mut Vec<u8>, color: u32, is_fg: bool) {
         _ => {}
     }
 }
-

@@ -154,7 +154,7 @@ impl Pane {
                     }
                 }
             }
-                .in_current_span(),
+            .in_current_span(),
         );
 
         Ok(handle_clone)
