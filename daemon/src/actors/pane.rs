@@ -22,6 +22,7 @@ pub enum PaneEvent {
     Render,   // uses the diff from prev state to get to desired state (falls back to rerender if no prev state)
     Rerender, // full rerender
     Resize { rect: Rect },
+    PtyDied,
     Hide,
     Reveal,
     Kill,
@@ -122,9 +123,14 @@ impl Pane {
                                             }
                                             is_dirty = true;
                                         }
+                                        PtyDied => {
+                                            debug!("Pty died via exit");
+                                            self.window_handle.kill_pane().await.unwrap();
+                                            break;
+                                        }
                                         Kill => {
                                             self.pty_handle.kill().await.unwrap();
-                                            debug!("Pty died");
+                                            debug!("Pty died via pane kill");
                                             break;
                                         }
                                         Render => {

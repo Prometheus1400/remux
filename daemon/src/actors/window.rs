@@ -132,7 +132,7 @@ impl Window {
                                 self.handle_split_pane(direction).await.unwrap();
                             }
                             KillPane => {
-                                debug!("Window: IteratePane");
+                                debug!("Window: KillPane");
                                 self.handle_kill_pane().await.unwrap();
                             }
                             Redraw => {
@@ -147,6 +147,7 @@ impl Window {
                                 break;
                             }
                             TerminalResize { rows, cols } => {
+                                debug!("Window: TerminalResize");
                                 self.handle_terminal_resize(rows, cols).await.unwrap();
                             }
                         }
