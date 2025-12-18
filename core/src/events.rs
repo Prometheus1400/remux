@@ -14,7 +14,7 @@ pub enum CliEvent {
 
     SwitchSession(String), // switch session - does nothing if session does not exist
 
-    WindowResize { rows: u16, cols: u16 },
+    TerminalResize { rows: u16, cols: u16 },
 
     Detach,
 }

@@ -30,7 +30,7 @@ pub enum WindowEvent {
     },
     KillPane,
     Redraw,
-    WindowResize {
+    TerminalResize {
         rows: u16,
         cols: u16,
     },
@@ -146,8 +146,8 @@ impl Window {
                                 }
                                 break;
                             }
-                            WindowResize { rows, cols } => {
-                                self.handle_window_resize(rows, cols).await.unwrap();
+                            TerminalResize { rows, cols } => {
+                                self.handle_terminal_resize(rows, cols).await.unwrap();
                             }
                         }
                     }
@@ -288,7 +288,7 @@ impl Window {
         self.handle_redraw().await?;
         Ok(())
     }
-    async fn handle_window_resize(&mut self, rows: u16, cols: u16) -> Result<()> {
+    async fn handle_terminal_resize(&mut self, rows: u16, cols: u16) -> Result<()> {
         self.root_rect = Rect {
             x: 0,
             y: 0,
