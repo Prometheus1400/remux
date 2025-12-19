@@ -113,8 +113,10 @@ impl LayoutNode {
 
                 match direction {
                     SplitDirection::Vertical => {
-                        let left_width = (area.width as u32 * left_weight / total_weight) as u16;
-                        let right_width = area.width - left_width;
+                        let available_width = area.width.saturating_sub(1);
+
+                        let left_width = (available_width as u32 * left_weight / total_weight) as u16;
+                        let right_width = available_width - left_width;
 
                         let left_rect = Rect {
                             width: left_width,
@@ -123,7 +125,7 @@ impl LayoutNode {
 
                         let right_rect = Rect {
                             width: right_width,
-                            x: area.x + left_width,
+                            x: area.x + left_width + 1,
                             ..area
                         };
 
@@ -135,8 +137,10 @@ impl LayoutNode {
                         Ok(())
                     }
                     SplitDirection::Horizontal => {
-                        let top_height = (area.height as u32 * left_weight / total_weight) as u16;
-                        let bottom_height = area.height - top_height;
+                        let available_height = area.height.saturating_sub(1);
+
+                        let top_height = (available_height as u32 * left_weight / total_weight) as u16;
+                        let bottom_height = available_height - top_height;
 
                         let top_rect = Rect {
                             height: top_height,
@@ -145,7 +149,7 @@ impl LayoutNode {
 
                         let bottom_rect = Rect {
                             height: bottom_height,
-                            y: area.y + top_height,
+                            y: area.y + top_height + 1,
                             ..area
                         };
 
