@@ -164,10 +164,12 @@ impl Pty {
                             Err(Errno::ECHILD) => info!("No such child process: {}", child),
                             Err(err) => error!("waitpid failed: {}", err),
                         }
+
                         debug!("stopping PtyProcess run");
                         if let Err(e) = self.pane_handle.pty_died().await {
                             warn!("Could not notify pane that PTY died (Pane has likely already died) {}", e);
                         }
+
                         Ok(())
                     }.in_current_span()
                 });

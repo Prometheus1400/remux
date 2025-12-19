@@ -1,4 +1,5 @@
 mod actors;
+mod cell;
 mod control_signals;
 mod daemon;
 mod layout;

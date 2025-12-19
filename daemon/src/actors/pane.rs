@@ -1,6 +1,8 @@
+use std::time::Duration;
+
 use bytes::Bytes;
 use handle_macro::Handle;
-use tokio::sync::mpsc;
+use tokio::{sync::mpsc, time::MissedTickBehavior};
 use tracing::Instrument;
 
 use crate::{
@@ -8,6 +10,7 @@ use crate::{
         pty::{Pty, PtyHandle},
         window::WindowHandle,
     },
+    cell::RemuxCell,
     layout::Rect,
     prelude::*,
 };
@@ -16,10 +19,10 @@ use crate::{
 pub enum PaneEvent {
     UserInput(Bytes),
     PtyOutput(Bytes),
-    PtyDied,
     Render,   // uses the diff from prev state to get to desired state (falls back to rerender if no prev state)
     Rerender, // full rerender
     Resize { rect: Rect },
+    PtyDied,
     Hide,
     Reveal,
     Kill,
@@ -38,9 +41,14 @@ pub struct Pane {
     rx: mpsc::Receiver<PaneEvent>,
     pane_state: PaneState,
     pty_handle: PtyHandle,
+
+    // cells
+    force_rerender: bool,
+    curr_grid: Vec<RemuxCell>,
+    prev_grid: Vec<RemuxCell>,
+
     // vte related
     vte: vt100::Parser,
-    prev_screen_state: Option<vt100::Screen>,
     rect: Rect,
 }
 impl Pane {
@@ -53,6 +61,10 @@ impl Pane {
         let (tx, rx) = mpsc::channel(10);
         let handle = PaneHandle { tx };
 
+        let total_cells = (rect.width * rect.height) as usize;
+        let curr_grid = vec![RemuxCell::default(); total_cells];
+        let prev_grid = vec![RemuxCell::default(); total_cells];
+
         let vte = vt100::Parser::new(rect.height, rect.width, 0);
         let pty_handle = Pty::spawn(handle.clone(), rect)?;
         Ok(Self {
@@ -61,56 +73,88 @@ impl Pane {
             window_handle,
             pty_handle,
             rx,
+            force_rerender: true,
+            curr_grid,
+            prev_grid,
             vte,
             pane_state: PaneState::Visible,
-            prev_screen_state: None,
             rect,
         })
     }
     fn run(mut self) -> Result<PaneHandle> {
         let handle_clone = self.handle.clone();
+
+        let mut render_ticker = tokio::time::interval(Duration::from_millis(16)); // 60 fps
+        render_ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
+
+        let mut is_dirty = true;
         let _task = tokio::spawn(
             async move {
                 loop {
-                    if let Some(event) = self.rx.recv().await {
-                        match &event {
-                            UserInput(..) | PtyOutput(..) => {
-                                trace!(event=?event);
-                            }
-                            _ => {
-                                info!(event=?event);
-                            }
-                        }
-                        match event {
-                            UserInput(bytes) => {
-                                self.handle_input(bytes).await.unwrap();
-                            }
-                            PtyOutput(bytes) => {
-                                if let Err(e) = self.handle_pty_output(bytes).await {
-                                    error!("Error while handling PTY output: {}", e);
+                    tokio::select! {
+                        _ = render_ticker.tick() => {
+                            if let PaneState::Visible = self.pane_state {
+                                if self.force_rerender || is_dirty {
+                                    if let Err(e) = self.handle_render().await {
+                                        error!("Failed to render frame: {e}")
+                                    }
+                                    is_dirty = false;
                                 }
                             }
-                            PtyDied => {
-                                break;
-                            }
-                            Kill => {
-                                self.pty_handle.kill().await.unwrap();
-                                break;
-                            }
-                            Render => {
-                                self.handle_render().await.unwrap();
-                            }
-                            Rerender => {
-                                self.handle_rerender().await.unwrap();
-                            }
-                            Resize { rect } => {
-                                self.handle_resize(rect).await.unwrap();
-                            }
-                            Hide => {
-                                self.pane_state = PaneState::Hidden;
-                            }
-                            Reveal => {
-                                self.pane_state = PaneState::Visible;
+                        }
+                        event_result = self.rx.recv() => {
+                            match event_result {
+                                Some(event) => {
+                                    match &event {
+                                        UserInput(..) | PtyOutput(..) => {
+                                            trace!(event=?event);
+                                        }
+                                        _ => {
+                                            info!(event=?event);
+                                        }
+                                    }
+                                    match event {
+                                        UserInput(bytes) => {
+                                            self.handle_input(bytes).await.unwrap();
+                                        }
+                                        PtyOutput(bytes) => {
+                                            if let Err(e) = self.handle_pty_output(bytes).await {
+                                                error!("Error while handling PTY output: {}", e);
+                                            }
+                                            is_dirty = true;
+                                        }
+                                        PtyDied => {
+                                            debug!("Pty died via exit");
+                                            self.window_handle.kill_pane().await.unwrap();
+                                            break;
+                                        }
+                                        Kill => {
+                                            self.pty_handle.kill().await.unwrap();
+                                            debug!("Pty died via pane kill");
+                                            break;
+                                        }
+                                        Render => {
+                                            is_dirty = true;
+                                        }
+                                        Rerender => {
+                                            self.force_rerender = true;
+                                        }
+                                        Resize { rect } => {
+                                            self.handle_resize(rect).await.unwrap();
+                                            self.force_rerender = true;
+                                        }
+                                        Hide => {
+                                            self.pane_state = PaneState::Hidden;
+                                        }
+                                        Reveal => {
+                                            self.pane_state = PaneState::Visible;
+                                        }
+                                    }
+                                }
+                                None => {
+                                    error!("Channel closed");
+                                    break;
+                                }
                             }
                         }
                     }
@@ -129,48 +173,40 @@ impl Pane {
 
     async fn handle_pty_output(&mut self, bytes: Bytes) -> Result<()> {
         self.vte.process(&bytes);
-        self.handle_rerender().await
+        Ok(())
     }
 
-    // TODO: below code is bad and unused, need better diffing solution
     async fn handle_render(&mut self) -> Result<()> {
-        match &self.prev_screen_state {
-            Some(prev) => {
-                let cur_screen_state = self.vte.screen();
-                let diff = cur_screen_state.state_diff(prev);
-                self.prev_screen_state = Some(cur_screen_state.clone());
-                let (c_row, c_col) = cur_screen_state.cursor_position();
-                let global_x = self.rect.x + 1 + c_col;
-                let global_y = self.rect.y + 1 + c_row;
-                Ok(self
-                    .window_handle
-                    .pane_output(self.id, Bytes::copy_from_slice(&diff), Some((global_x, global_y)))
-                    .await?)
-            }
-            None => self.handle_rerender().await,
-        }
-    }
-
-    async fn handle_rerender(&mut self) -> Result<()> {
         let screen = self.vte.screen();
+        let rows = self.rect.height as usize;
+        let cols = self.rect.width as usize;
 
-        trace!("RERENDER -- id: {} size {:?}", self.id, screen.size());
-        self.prev_screen_state = Some(screen.clone());
-        let mut output = Vec::new();
-
-        for (i, row) in screen.rows_formatted(0, self.rect.width).enumerate() {
-            let cx = self.rect.x + 1;
-            let cy = self.rect.y + 1 + (i as u16);
-
-            let move_cursor = format!("\x1b[{};{}H", cy, cx);
-            output.extend_from_slice(move_cursor.as_bytes());
-
-            let erase_chars = format!("\x1b[{}X", self.rect.width);
-            output.extend_from_slice(erase_chars.as_bytes());
-            output.extend_from_slice(&row);
+        let total_cells = rows * cols;
+        if self.curr_grid.len() != total_cells {
+            self.curr_grid.resize(total_cells, RemuxCell::default());
+        }
+        if self.prev_grid.len() != total_cells {
+            self.prev_grid.resize(total_cells, RemuxCell::default());
         }
 
-        output.extend_from_slice(b"\x1b[0m");
+        for r in 0..rows {
+            for c in 0..cols {
+                let idx = r * cols + c;
+                let remux_cell = &mut self.curr_grid[idx];
+                if let Some(cell) = screen.cell(r as u16, c as u16) {
+                    remux_cell.set_content(cell.contents().as_bytes());
+                    remux_cell.set_fg_color(cell.fgcolor());
+                    remux_cell.set_bg_color(cell.bgcolor());
+                    remux_cell.set_attributes_from_vt100(cell);
+                } else {
+                    *remux_cell = RemuxCell::default();
+                }
+            }
+        }
+
+        let output = RemuxCell::render_diff(self.rect, &self.prev_grid, &self.curr_grid, self.force_rerender);
+        std::mem::swap(&mut self.prev_grid, &mut self.curr_grid);
+        self.force_rerender = false;
 
         let (c_row, c_col) = screen.cursor_position();
         let global_x = self.rect.x + 1 + c_col;
@@ -183,10 +219,13 @@ impl Pane {
 
     async fn handle_resize(&mut self, rect: Rect) -> Result<()> {
         self.rect = rect;
+
+        let new_size = (rect.width * rect.height) as usize;
+        self.prev_grid.resize(new_size, RemuxCell::default());
+        self.curr_grid.resize(new_size, RemuxCell::default());
+
         self.pty_handle.resize(rect).await?;
         self.vte.set_size(rect.height, rect.width);
-
-        self.handle_rerender().await?;
         Ok(())
     }
 }
