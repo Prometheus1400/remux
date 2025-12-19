@@ -113,6 +113,7 @@ impl LayoutNode {
 
                 match direction {
                     SplitDirection::Vertical => {
+                        // remove a column for the border
                         let available_width = area.width.saturating_sub(1);
 
                         let left_width = (available_width as u32 * left_weight / total_weight) as u16;
@@ -123,6 +124,7 @@ impl LayoutNode {
                             ..area
                         };
 
+                        // +1 for the border
                         let right_rect = Rect {
                             width: right_width,
                             x: area.x + left_width + 1,
@@ -137,6 +139,7 @@ impl LayoutNode {
                         Ok(())
                     }
                     SplitDirection::Horizontal => {
+                        // remove a row for the border
                         let available_height = area.height.saturating_sub(1);
 
                         let top_height = (available_height as u32 * left_weight / total_weight) as u16;
@@ -147,6 +150,7 @@ impl LayoutNode {
                             ..area
                         };
 
+                        // +1 for the border
                         let bottom_rect = Rect {
                             height: bottom_height,
                             y: area.y + top_height + 1,
