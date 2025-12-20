@@ -10,6 +10,7 @@ use crate::{
         pane::{Pane, PaneHandle},
         session::SessionHandle,
     },
+    cell::set_cursor_position,
     layout::{LayoutNode, Rect, SplitDirection},
     prelude::*,
 };
@@ -183,6 +184,8 @@ impl Window {
         Ok(())
     }
     async fn handle_redraw(&mut self) -> Result<()> {
+        self.draw_pane_borders().await?;
+
         for pane in self.panes.iter() {
             pane.1.rerender().await?;
         }
@@ -217,6 +220,8 @@ impl Window {
                 return Ok(());
             }
         };
+
+        self.draw_pane_borders().await?;
 
         let move_cursor = format!("\x1b[{};{}H", ty, tx);
         self.session_handle.window_output(Bytes::from(move_cursor)).await?;
@@ -307,6 +312,110 @@ impl Window {
         }
 
         self.handle_redraw().await?;
+        Ok(())
+    }
+
+    async fn draw_pane_borders(&mut self) -> Result<()> {
+        let cols = self.root_rect.width;
+        let rows = self.root_rect.height;
+
+        let mut output_buffer = Vec::with_capacity(cols as usize * rows as usize * 4);
+
+        // grab active pane rectangle
+        let active_rect = self.layout_sizing_map.get(&self.active_pane_id);
+
+        // checks if cell is in a pane or not
+        let is_content = |x: u16, y: u16, map: &BTreeMap<usize, Rect>| -> bool {
+            for rect in map.values() {
+                if x >= rect.x && x < rect.x + rect.width && y >= rect.y && y < rect.y + rect.height {
+                    return true;
+                }
+            }
+            false
+        };
+
+        // reset colors
+        output_buffer.extend_from_slice(b"\x1b[0m");
+
+        // set initial cursor position
+        let mut cursor_row = 0;
+        let mut cursor_col = 0;
+        let mut cursor_invalid = true;
+
+        for y in 0..rows {
+            for x in 0..cols {
+                // skip cells in panes
+                if is_content(x, y, &self.layout_sizing_map) {
+                    continue;
+                }
+
+                // get surrounding borders
+                let north = y > 0 && !is_content(x, y - 1, &self.layout_sizing_map);
+                let south = y < rows - 1 && !is_content(x, y + 1, &self.layout_sizing_map);
+                let west = x > 0 && !is_content(x - 1, y, &self.layout_sizing_map);
+                let east = x < cols - 1 && !is_content(x + 1, y, &self.layout_sizing_map);
+
+                // pattern match to get correct border char
+                let border_char = match (north, south, east, west) {
+                    (true, true, false, false) => '│',
+                    (false, false, true, true) => '─',
+                    (false, true, true, false) => '┌',
+                    (false, true, false, true) => '┐',
+                    (true, false, true, false) => '└',
+                    (true, false, false, true) => '┘',
+                    (true, true, true, false) => '├',
+                    (true, true, false, true) => '┤',
+                    (false, true, true, true) => '┬',
+                    (true, false, true, true) => '┴',
+                    (true, true, true, true) => '┼',
+                    (true, false, false, false) => '│',
+                    (false, true, false, false) => '│',
+                    (false, false, true, false) => '─',
+                    (false, false, false, true) => '─',
+                    _ => ' ',
+                };
+
+                // move cursor if at the wrong spot
+                if cursor_invalid || y != cursor_row || x != cursor_col {
+                    set_cursor_position(&mut output_buffer, x + 1, y + 1);
+                    cursor_invalid = false;
+                    cursor_row = y;
+                    cursor_col = x;
+                }
+
+                // if the border is on the active pane, set this to true
+                let mut is_active_border = false;
+                if let Some(rect) = active_rect {
+                    if x >= rect.x.saturating_sub(1)
+                        && x < rect.x + rect.width + 1
+                        && y >= rect.y.saturating_sub(1)
+                        && y < rect.y + rect.height + 1
+                    {
+                        is_active_border = true;
+                    }
+                }
+
+                // configurable colors later
+                if is_active_border {
+                    output_buffer.extend_from_slice(b"\x1b[96m");
+                } else {
+                    output_buffer.extend_from_slice(b"\x1b[90m");
+                }
+
+                // add ANSI
+                let mut border_char_buf = [0u8; 4];
+                let str_slice = border_char.encode_utf8(&mut border_char_buf);
+                output_buffer.extend_from_slice(str_slice.as_bytes());
+
+                cursor_col += 1;
+            }
+        }
+
+        // send to session
+        if !output_buffer.is_empty() {
+            self.session_handle.window_output(Bytes::from(output_buffer)).await?;
+        }
+
         Ok(())
     }
 }

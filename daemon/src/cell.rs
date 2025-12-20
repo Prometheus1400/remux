@@ -319,7 +319,7 @@ fn push_u16(buf: &mut Vec<u8>, mut n: u16) {
 }
 
 #[inline]
-fn set_cursor_position(buf: &mut Vec<u8>, x: u16, y: u16) {
+pub fn set_cursor_position(buf: &mut Vec<u8>, x: u16, y: u16) {
     buf.extend_from_slice(b"\x1b[");
     push_u16(buf, y);
     buf.push(b';');
