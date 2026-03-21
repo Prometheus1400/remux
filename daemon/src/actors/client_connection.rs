@@ -5,7 +5,7 @@ use remux_core::{
     comm,
     events::DaemonEvent,
     messages::{ResponseBuilder, ResponseResult, response},
-    states::DaemonState,
+    states::ServerSnapshot,
 };
 use tokio::{net::UnixStream, sync::mpsc};
 use uuid::Uuid;
@@ -28,7 +28,7 @@ pub enum ClientConnectionEvent {
     // variants related to initialization phase
     InitialAttach(u32), // invoked directly by the daemon
     // this variant is unique in that it responds to client by sending a message not an event
-    InitialAttachResult(Result<DaemonState>),
+    InitialAttachResult(Result<ServerSnapshot>),
 }
 use ClientConnectionEvent::*;
 
@@ -98,8 +98,8 @@ impl ClientConnection {
                             let should_break = match event {
                                 InitialAttachResult(result) if matches!(self.state, ClientConnectionState::Unattached) => {
                                     match result {
-                                        Ok(daemon_state) => {
-                                            let res = ResponseBuilder::default().result(ResponseResult::Success(response::Attach{initial_daemon_state: daemon_state})).build();
+                                        Ok(server_snapshot) => {
+                                            let res = ResponseBuilder::default().result(ResponseResult::Success(response::Attach{initial_server_snapshot: server_snapshot})).build();
                                             info!(respnse=?res, "Sending response");
                                             if let Err(e) = comm::send_message(&mut self.stream, &res).await {
                                                 warn!(error=%e, client_id=%self.id, "Failed to send initial attach response");

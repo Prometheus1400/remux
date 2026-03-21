@@ -90,7 +90,7 @@ mod test {
             request::{self, DaemonRequestMessage, DaemonRequestMessageBody},
             response,
         },
-        states::DaemonState,
+        states::ServerSnapshot,
     };
 
     #[tokio::test]
@@ -116,7 +116,7 @@ mod test {
         };
 
         let attach_response = response::Attach {
-            initial_daemon_state: DaemonState::default(),
+            initial_server_snapshot: ServerSnapshot::default(),
         };
         let res = ResponseBuilder::default()
             .result(ResponseResult::Success(attach_response.clone()))

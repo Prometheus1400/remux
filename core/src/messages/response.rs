@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{messages::traits::Message, rand, states::DaemonState};
+use crate::{messages::traits::Message, rand, states::ServerSnapshot};
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 pub struct ResponseMessage<T> {
@@ -20,7 +20,7 @@ pub enum ResponseResult<T> {
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 pub struct Attach {
-    pub initial_daemon_state: DaemonState,
+    pub initial_server_snapshot: ServerSnapshot,
 }
 
 // --------- builder ---------  //

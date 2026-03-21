@@ -119,10 +119,10 @@ async fn attach(mut stream: UnixStream, attach_request: CliRequestMessage<Attach
     debug!("Sending attach request");
     let res = comm::send_and_recv_message(&mut stream, &attach_request).await?;
     debug!(response=?res, "Recieved attach response");
-    debug!(daemon_state=?res.initial_daemon_state, "Recieved initial daemon state");
+    debug!(server_snapshot=?res.initial_server_snapshot, "Recieved initial server snapshot");
 
     debug!("Starting app");
-    let mut app = App::new(attach_request.body.id, stream, res.initial_daemon_state);
+    let mut app = App::new(attach_request.body.id, stream, res.initial_server_snapshot);
     app.run().await?;
     debug!("App terminated");
     disable_raw_mode()?;

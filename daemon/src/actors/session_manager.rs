@@ -4,7 +4,7 @@ use bytes::Bytes;
 use color_eyre::eyre::{self, OptionExt, WrapErr, eyre};
 use handle_macro::Handle;
 use itertools::Itertools;
-use remux_core::states::DaemonState;
+use remux_core::states::ServerSnapshot;
 use tokio::sync::mpsc;
 use tracing::Instrument;
 use uuid::Uuid;
@@ -100,10 +100,13 @@ impl SessionManagerState {
         self.session_id_count += 1;
         x
     }
-    pub fn snapshot(&self) -> DaemonState {
-        let mut daemon_state = DaemonState::default();
-        daemon_state.set_sessions(self.sessions.values().map(|s| (s.id, s.name.clone())).collect_vec());
-        daemon_state
+    pub fn snapshot_for_client(&self, client_id: Uuid) -> ServerSnapshot {
+        let mut server_snapshot = ServerSnapshot::default();
+        server_snapshot.set_sessions(self.sessions.values().map(|s| (s.id, s.name.clone())).collect_vec());
+        if let Some(session_id) = self.client_to_session_mapping.get(&client_id).copied() {
+            server_snapshot.set_active_session(session_id);
+        }
+        server_snapshot
     }
     // pub fn get_by_id(&self, id: u32) -> Option<&SessionInfo> {
     //     self.sessions.get(&id)
@@ -307,7 +310,9 @@ impl SessionManager {
                     .state
                     .get_session_by_name(session_name)
                     .ok_or_else(|| eyre!("session {session_name} should exist after attach"))?;
-                client_handle.initial_attach_result(Ok(self.state.snapshot())).await?;
+                client_handle
+                    .initial_attach_result(Ok(self.state.snapshot_for_client(client_id)))
+                    .await?;
                 client_handle.success_attach_to_session(session_info.id).await?;
                 session_info.handle.redraw().await?;
             }

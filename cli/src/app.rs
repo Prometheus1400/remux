@@ -3,11 +3,11 @@ use std::{fmt::Debug, io::Stdout, time::Duration};
 use bytes::Bytes;
 use color_eyre::eyre::{self, WrapErr};
 use derivative::Derivative;
-use ratatui::{Terminal, prelude::CrosstermBackend, restore, widgets::ListState};
+use ratatui::{Terminal, layout::Size, prelude::CrosstermBackend, restore, widgets::ListState};
 use remux_core::{
     comm,
     events::{CliEvent, DaemonEvent},
-    states::DaemonState,
+    states::ServerSnapshot,
 };
 use terminput::Event;
 use tokio::{
@@ -21,7 +21,7 @@ use vt100::Parser;
 use crate::{
     input_parser::{self, InputParser},
     prelude::*,
-    states::status_line_state::StatusLineState,
+    states::status_line_state::{StatusLineContext, StatusLineState},
     tasks::{
         input::{self, Input},
         lua,
@@ -43,6 +43,7 @@ pub struct TerminalState {
 
 #[derive(Debug)]
 pub struct UiState {
+    pub mode: AppMode,
     pub selector: SelectorState,
     pub status_line: StatusLineState,
 }
@@ -83,15 +84,14 @@ pub enum AppMode {
 }
 
 #[derive(Debug)]
-pub struct AppState {
-    pub terminal: TerminalState,
-    pub daemon: DaemonState,
+pub struct ClientState {
+    pub server: ServerSnapshot,
     pub ui: UiState,
-    pub mode: AppMode,
+    pub terminal: TerminalState,
 }
 
 pub struct App {
-    pub state: AppState,
+    pub state: ClientState,
     input_parser: InputParser,
     stream: UnixStream,
     bg_tasks: Vec<CliTask>,
@@ -99,20 +99,20 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(id: Uuid, stream: UnixStream, daemon_state: DaemonState) -> Self {
+    pub fn new(id: Uuid, stream: UnixStream, server_snapshot: ServerSnapshot) -> Self {
         Self {
             id,
             stream,
             input_parser: InputParser::default(),
-            state: AppState {
-                mode: AppMode::Normal,
+            state: ClientState {
+                server: server_snapshot,
                 terminal: TerminalState {
                     emulator: Parser::default(),
                     size: (0, 0),
                     needs_resize: true,
                 },
-                daemon: daemon_state,
                 ui: UiState {
+                    mode: AppMode::Normal,
                     selector: SelectorState {
                         list_state: ListState::default(),
                         list: Vec::new(),
@@ -137,8 +137,8 @@ impl App {
         self.bg_tasks.push(lua::start_status_line_task(lua_tx)?);
         let mut ticker = interval(Duration::from_millis(50));
 
-        // need an initial render since ui updates app state to convey terminal size information
-        term.draw(|f| ui::draw(f, &mut self.state))?;
+        self.capture_terminal_size(term.size()?)?;
+        self.render(&mut term)?;
         loop {
             if self.state.terminal.needs_resize {
                 let (rows, cols) = self.state.terminal.size;
@@ -168,9 +168,8 @@ impl App {
                         }
                     }
                 }
-                Ok(mut status_line_state) = lua_rx.recv() => {
+                Ok(status_line_state) = lua_rx.recv() => {
                     trace!(status_line_state=?status_line_state, "received status line state");
-                    status_line_state.apply_built_ins(&self.state);
                     self.state.ui.status_line = status_line_state;
                 }
                 res = comm::recv_daemon_event(&mut self.stream) => {
@@ -186,22 +185,8 @@ impl App {
                                     info!(event=?event);
                                 }
                             }
-                            match event {
-                                DaemonEvent::Raw(bytes) => {
-                                    self.state.terminal.emulator.process(&bytes);
-                                }
-                                DaemonEvent::Disconnected => {
-                                    break;
-                                }
-                                DaemonEvent::ActiveSession(session_id) => {
-                                    self.state.daemon.set_active_session(session_id);
-                                }
-                                DaemonEvent::NewSession(session_id, session_name) => {
-                                    self.state.daemon.add_session(session_id, session_name);
-                                }
-                                _ => {
-                                    todo!();
-                                }
+                            if self.apply_daemon_event(event) {
+                                break;
                             }
                         }
                         Err(e) => {
@@ -211,7 +196,7 @@ impl App {
                     }
                 }
                 _ = ticker.tick() => {
-                    term.draw(|f| ui::draw(f, &mut self.state))?;
+                    self.render(&mut term)?;
                 }
             }
         }
@@ -225,8 +210,45 @@ impl App {
         Ok(())
     }
 
+    fn apply_daemon_event(&mut self, event: DaemonEvent) -> bool {
+        match event {
+            DaemonEvent::Raw(bytes) => {
+                self.state.terminal.emulator.process(&bytes);
+                false
+            }
+            DaemonEvent::Disconnected => true,
+            DaemonEvent::ActiveSession(session_id) => {
+                self.state.server.set_active_session(session_id);
+                false
+            }
+            DaemonEvent::NewSession(session_id, session_name) => {
+                self.state.server.add_session(session_id, session_name);
+                false
+            }
+            DaemonEvent::DeletedSession(session_id) => {
+                self.state.server.remove_session(session_id);
+                false
+            }
+            DaemonEvent::CurrentSessions(session_ids) => {
+                self.state
+                    .server
+                    .sessions
+                    .retain(|session| session_ids.contains(&session.id));
+                if self
+                    .state
+                    .server
+                    .active_session
+                    .is_some_and(|session_id| !session_ids.contains(&session_id))
+                {
+                    self.state.server.active_session = None;
+                }
+                false
+            }
+        }
+    }
+
     async fn dispatch_stdin(&mut self, bytes: Bytes) -> Result<()> {
-        match self.state.mode {
+        match self.state.ui.mode {
             AppMode::Normal => self.handle_stdin_for_normal_mode(bytes).await?,
             AppMode::SelectingSession => self.handle_stdin_for_selecting_mode(bytes).await?,
         }
@@ -246,11 +268,11 @@ impl App {
         };
         if let Some(selection) = selection_opt {
             match selection {
-                ui::traits::Selection::Index(i) => match self.state.mode {
+                ui::traits::Selection::Index(i) => match self.state.ui.mode {
                     AppMode::SelectingSession => {
                         let session = self
                             .state
-                            .daemon
+                            .server
                             .sessions
                             .get(i)
                             .ok_or_else(|| eyre::eyre!("selector chose invalid session index {i}"))?;
@@ -260,7 +282,7 @@ impl App {
                 },
                 ui::traits::Selection::Cancelled => {}
             }
-            self.state.mode = AppMode::Normal;
+            self.state.ui.mode = AppMode::Normal;
             self.state.ui.selector.list_state.select(Some(0));
             self.state.ui.selector.list.clear();
         }
@@ -284,15 +306,16 @@ impl App {
     async fn dispatch_action(&mut self, action: input_parser::Action) {
         match action {
             input_parser::Action::SwitchSession => {
-                self.state.mode = AppMode::SelectingSession;
+                self.state.ui.mode = AppMode::SelectingSession;
                 self.state.ui.selector.query.clear();
                 self.state.ui.selector.list_state.select(Some(0));
                 self.state.ui.selector.selector_type = SelectorType::Basic;
+                self.state.ui.selector.list.clear();
                 self.state
                     .ui
                     .selector
                     .list
-                    .extend(self.state.daemon.sessions.iter().map(|x| x.name.clone()));
+                    .extend(self.state.server.sessions.iter().map(|x| x.name.clone()));
                 self.state.ui.selector.displaying_list = self
                     .state
                     .ui
@@ -306,12 +329,43 @@ impl App {
         }
     }
 
+    fn render(&mut self, term: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
+        let status_line_state = self
+            .state
+            .ui
+            .status_line
+            .with_context(&StatusLineContext::from(&self.state.server));
+        term.draw(|f| {
+            ui::draw(
+                f,
+                &self.state.server,
+                &self.state.terminal,
+                &mut self.state.ui,
+                status_line_state.clone(),
+            );
+        })?;
+
+        Ok(())
+    }
+
+    fn capture_terminal_size(&mut self, size: Size) -> Result<()> {
+        let next_size = (size.height.saturating_sub(1), size.width);
+        if next_size.0 == 0 || next_size.1 == 0 {
+            return eyre::Ok(());
+        }
+
+        if self.state.terminal.size != next_size {
+            self.state.terminal.size = next_size;
+            self.state.terminal.needs_resize = true;
+        }
+
+        eyre::Ok(())
+    }
+
     #[instrument(skip(self, term))]
     async fn handle_resize(&mut self, term: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
-        self.state.terminal.needs_resize = true;
-        term.draw(|f| {
-            ui::draw(f, &mut self.state);
-        })?;
+        self.capture_terminal_size(term.size()?)?;
+        self.render(term)?;
 
         eyre::Ok(())
     }
