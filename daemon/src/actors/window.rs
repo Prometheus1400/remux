@@ -3,9 +3,10 @@ use std::collections::BTreeMap;
 use bytes::Bytes;
 
 use crate::{
-    cell::set_cursor_position,
+    cell::RemuxCell,
     layout::{LayoutNode, Rect, SplitDirection},
     prelude::*,
+    render::surface::Surface,
 };
 
 #[derive(Debug, Clone)]
@@ -33,13 +34,14 @@ pub struct Window {
     active_pane_id: usize,
     next_pane_id: usize,
     root_rect: Rect,
+    status_line_enabled: bool,
 
     #[allow(unused)]
     window_state: WindowState,
 }
 
 impl Window {
-    pub fn new() -> Result<(Self, Vec<WindowAction>)> {
+    pub fn new(status_line_enabled: bool) -> Result<(Self, Vec<WindowAction>)> {
         let init_pane_id = 0;
         let layout = LayoutNode::Pane { id: init_pane_id };
 
@@ -51,7 +53,7 @@ impl Window {
         };
 
         let mut layout_sizing_map = BTreeMap::new();
-        layout.calculate_layout(root_rect, &mut layout_sizing_map)?;
+        layout.calculate_layout(content_rect(root_rect, status_line_enabled), &mut layout_sizing_map)?;
         let init_rect = *layout_sizing_map
             .get(&init_pane_id)
             .ok_or_else(|| Error::msg("initial pane rect missing"))?;
@@ -64,6 +66,7 @@ impl Window {
                 active_pane_id: init_pane_id,
                 next_pane_id: init_pane_id + 1,
                 root_rect,
+                status_line_enabled,
                 window_state: WindowState::Focused,
             },
             vec![WindowAction::SpawnPane {
@@ -80,31 +83,15 @@ impl Window {
         }])
     }
 
-    pub fn handle_pane_output(
-        &mut self,
-        id: usize,
-        bytes: Bytes,
-        cursor: Option<(u16, u16)>,
-    ) -> Result<Vec<WindowAction>> {
+    pub fn handle_pane_output(&mut self, id: usize, cursor: Option<(u16, u16)>) -> Result<Vec<WindowAction>> {
         if let Some(pos) = cursor {
             self.pane_cursors.insert(id, pos);
         }
-
-        let mut actions = vec![WindowAction::SendOutput(bytes)];
-
-        if let Some(&(active_x, active_y)) = self.pane_cursors.get(&self.active_pane_id) {
-            let restore_cursor = format!("\x1b[{};{}H", active_y, active_x);
-            actions.push(WindowAction::SendOutput(Bytes::from(restore_cursor)));
-        }
-
-        Ok(actions)
+        Ok(Vec::new())
     }
 
     pub fn redraw(&mut self) -> Result<Vec<WindowAction>> {
         let mut actions = Vec::new();
-        if let Some(border_output) = self.draw_pane_borders()? {
-            actions.push(WindowAction::SendOutput(border_output));
-        }
 
         for id in self.layout_sizing_map.keys().copied() {
             actions.push(WindowAction::RerenderPane { id });
@@ -129,24 +116,7 @@ impl Window {
         };
 
         self.active_pane_id = ids[new_idx];
-
-        let mut actions = Vec::new();
-        if let Some(border_output) = self.draw_pane_borders()? {
-            actions.push(WindowAction::SendOutput(border_output));
-        }
-
-        let (tx, ty) = if let Some(&pos) = self.pane_cursors.get(&self.active_pane_id) {
-            pos
-        } else if let Some(rect) = self.layout_sizing_map.get(&self.active_pane_id) {
-            (rect.x + 1, rect.y + 1)
-        } else {
-            warn!("Active pane has no rect in layout map");
-            return Ok(actions);
-        };
-
-        let move_cursor = format!("\x1b[{};{}H", ty, tx);
-        actions.push(WindowAction::SendOutput(Bytes::from(move_cursor)));
-        Ok(actions)
+        Ok(Vec::new())
     }
 
     pub fn split_active_pane(&mut self, direction: SplitDirection) -> Result<Vec<WindowAction>> {
@@ -222,8 +192,10 @@ impl Window {
 
     fn recalculate_layout(&mut self) -> Result<()> {
         self.layout_sizing_map.clear();
-        self.layout
-            .calculate_layout(self.root_rect, &mut self.layout_sizing_map)
+        self.layout.calculate_layout(
+            content_rect(self.root_rect, self.status_line_enabled),
+            &mut self.layout_sizing_map,
+        )
     }
 
     fn resize_actions(&self) -> Vec<WindowAction> {
@@ -233,10 +205,37 @@ impl Window {
             .collect()
     }
 
-    fn draw_pane_borders(&self) -> Result<Option<Bytes>> {
+    pub fn compose_surface(
+        &self,
+        pane_surfaces: &BTreeMap<usize, Surface>,
+        status_line: Option<&Surface>,
+    ) -> Result<Surface> {
+        let mut surface = Surface::new(self.root_rect.width, self.root_rect.height);
+
+        for (id, rect) in &self.layout_sizing_map {
+            if let Some(pane_surface) = pane_surfaces.get(id) {
+                surface.overlay_at(pane_surface, rect.x, rect.y);
+            }
+        }
+
+        self.paint_pane_borders(&mut surface);
+
+        if let Some(rect) = self.layout_sizing_map.get(&self.active_pane_id) {
+            if let Some((cursor_x, cursor_y)) = self.pane_cursors.get(&self.active_pane_id) {
+                surface.set_cursor(Some((rect.x + cursor_x, rect.y + cursor_y)), true);
+            }
+        }
+
+        if let Some(status_line) = status_line {
+            surface.overlay_at(status_line, 0, self.root_rect.height.saturating_sub(1));
+        }
+
+        Ok(surface)
+    }
+
+    fn paint_pane_borders(&self, surface: &mut Surface) {
         let cols = self.root_rect.width;
         let rows = self.root_rect.height;
-        let mut output_buffer = Vec::with_capacity(cols as usize * rows as usize * 4);
         let active_rect = self.layout_sizing_map.get(&self.active_pane_id);
 
         let is_content = |x: u16, y: u16, map: &BTreeMap<usize, Rect>| -> bool {
@@ -247,12 +246,6 @@ impl Window {
             }
             false
         };
-
-        output_buffer.extend_from_slice(b"\x1b[0m");
-
-        let mut cursor_row = 0;
-        let mut cursor_col = 0;
-        let mut cursor_invalid = true;
 
         for y in 0..rows {
             for x in 0..cols {
@@ -284,13 +277,6 @@ impl Window {
                     _ => ' ',
                 };
 
-                if cursor_invalid || y != cursor_row || x != cursor_col {
-                    set_cursor_position(&mut output_buffer, x + 1, y + 1);
-                    cursor_invalid = false;
-                    cursor_row = y;
-                    cursor_col = x;
-                }
-
                 let mut is_active_border = false;
                 if let Some(rect) = active_rect {
                     if x >= rect.x.saturating_sub(1)
@@ -302,24 +288,30 @@ impl Window {
                     }
                 }
 
-                if is_active_border {
-                    output_buffer.extend_from_slice(b"\x1b[96m");
-                } else {
-                    output_buffer.extend_from_slice(b"\x1b[90m");
-                }
-
+                let mut cell = RemuxCell::default();
                 let mut border_char_buf = [0u8; 4];
                 let str_slice = border_char.encode_utf8(&mut border_char_buf);
-                output_buffer.extend_from_slice(str_slice.as_bytes());
-
-                cursor_col += 1;
+                cell.set_content(str_slice.as_bytes());
+                cell.set_fg_color(if is_active_border {
+                    vt100::Color::Idx(14)
+                } else {
+                    vt100::Color::Idx(8)
+                });
+                surface.paint_cell(x, y, cell);
             }
         }
+    }
+}
 
-        if output_buffer.is_empty() {
-            Ok(None)
-        } else {
-            Ok(Some(Bytes::from(output_buffer)))
+fn content_rect(root_rect: Rect, status_line_enabled: bool) -> Rect {
+    if status_line_enabled && root_rect.height > 0 {
+        Rect {
+            x: root_rect.x,
+            y: root_rect.y,
+            width: root_rect.width,
+            height: root_rect.height.saturating_sub(1),
         }
+    } else {
+        root_rect
     }
 }

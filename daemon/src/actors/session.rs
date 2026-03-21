@@ -13,6 +13,12 @@ use crate::{
         window::{Window, WindowAction},
     },
     layout::{Rect, SplitDirection},
+    lua::status_line::StatusLineRuntime,
+    render::{
+        diff::render_surface_diff,
+        overlay::{SessionSwitcherOverlay, render_session_switcher_overlay},
+        surface::Surface,
+    },
     prelude::*,
 };
 
@@ -32,7 +38,7 @@ pub enum SessionEvent {
     RenameSession(String),
     PaneOutput {
         id: usize,
-        bytes: Bytes,
+        surface: Surface,
         cursor: Option<(u16, u16)>,
     },
     PaneDied {
@@ -42,6 +48,14 @@ pub enum SessionEvent {
         rows: u16,
         cols: u16,
     },
+    ShowSessionSwitcher {
+        sessions: Vec<String>,
+        selected: usize,
+    },
+    UpdateSessionSwitcherSelection {
+        selected: usize,
+    },
+    HideSessionSwitcher,
     Kill,
 }
 use SessionEvent::*;
@@ -54,6 +68,10 @@ pub struct Session {
     rx: mpsc::Receiver<SessionEvent>,
     window: Window,
     pane_handles: BTreeMap<usize, PaneHandle>,
+    pane_surfaces: BTreeMap<usize, Surface>,
+    prev_surface: Surface,
+    status_line: StatusLineRuntime,
+    session_switcher: Option<SessionSwitcherOverlay>,
     startup_actions: Vec<WindowAction>,
 }
 
@@ -67,7 +85,8 @@ impl Session {
     fn new(id: u32, name: String, session_manager_handle: SessionManagerHandle) -> Result<Self> {
         let (tx, rx) = mpsc::channel(10);
         let handle = SessionHandle { tx };
-        let (window, startup_actions) = Window::new()?;
+        let status_line = StatusLineRuntime::load_default()?;
+        let (window, startup_actions) = Window::new(status_line.enabled()?)?;
 
         Ok(Self {
             id,
@@ -77,6 +96,10 @@ impl Session {
             rx,
             window,
             pane_handles: BTreeMap::new(),
+            pane_surfaces: BTreeMap::new(),
+            prev_surface: Surface::new(80, 24),
+            status_line,
+            session_switcher: None,
             startup_actions,
         })
     }
@@ -89,6 +112,7 @@ impl Session {
                 self.execute_window_actions(startup_actions)
                     .await
                     .wrap_err("failed to execute session startup actions")?;
+                self.compose_and_send(true).await?;
 
                 loop {
                     if let Some(event) = self.rx.recv().await {
@@ -120,11 +144,19 @@ impl Session {
                                     UserKillPane => self.handle_kill_pane().await,
                                     Redraw => {
                                         let actions = self.window.redraw()?;
-                                        self.execute_window_actions(actions).await
+                                        self.execute_window_actions(actions).await?;
+                                        self.compose_and_send(true).await
                                     }
                                     TerminalResize { rows, cols } => self.handle_terminal_resize(rows, cols).await,
-                                    PaneOutput { id, bytes, cursor } => {
-                                        self.handle_pane_output(id, bytes, cursor).await
+                                    ShowSessionSwitcher { sessions, selected } => {
+                                        self.handle_show_session_switcher(sessions, selected).await
+                                    }
+                                    UpdateSessionSwitcherSelection { selected } => {
+                                        self.handle_update_session_switcher_selection(selected).await
+                                    }
+                                    HideSessionSwitcher => self.handle_hide_session_switcher().await,
+                                    PaneOutput { id, surface, cursor } => {
+                                        self.handle_pane_output(id, surface, cursor).await
                                     }
                                     PaneDied { id } => self.handle_pane_died(id).await,
                                     RenameSession(..) | Kill => Ok(()),
@@ -155,17 +187,20 @@ impl Session {
 
     async fn handle_new_connection(&mut self) -> Result<()> {
         let actions = self.window.redraw()?;
-        self.execute_window_actions(actions).await
+        self.execute_window_actions(actions).await?;
+        self.compose_and_send(true).await
     }
 
     async fn handle_iterate_pane(&mut self, is_next: bool) -> Result<()> {
         let actions = self.window.iterate_active_pane(is_next)?;
-        self.execute_window_actions(actions).await
+        self.execute_window_actions(actions).await?;
+        self.compose_and_send(true).await
     }
 
     async fn handle_split_pane(&mut self, direction: SplitDirection) -> Result<()> {
         let actions = self.window.split_active_pane(direction)?;
-        self.execute_window_actions(actions).await
+        self.execute_window_actions(actions).await?;
+        self.compose_and_send(true).await
     }
 
     async fn handle_kill_pane(&mut self) -> Result<()> {
@@ -175,18 +210,41 @@ impl Session {
 
     async fn handle_terminal_resize(&mut self, rows: u16, cols: u16) -> Result<()> {
         let actions = self.window.resize_terminal(rows, cols)?;
-        self.execute_window_actions(actions).await
+        self.prev_surface = Surface::new(cols, rows);
+        self.execute_window_actions(actions).await?;
+        self.compose_and_send(false).await
     }
 
-    async fn handle_pane_output(&mut self, id: usize, bytes: Bytes, cursor: Option<(u16, u16)>) -> Result<()> {
-        let actions = self.window.handle_pane_output(id, bytes, cursor)?;
-        self.execute_window_actions(actions).await
+    async fn handle_pane_output(&mut self, id: usize, surface: Surface, cursor: Option<(u16, u16)>) -> Result<()> {
+        self.pane_surfaces.insert(id, surface);
+        let actions = self.window.handle_pane_output(id, cursor)?;
+        self.execute_window_actions(actions).await?;
+        self.compose_and_send(false).await
+    }
+
+    async fn handle_show_session_switcher(&mut self, sessions: Vec<String>, selected: usize) -> Result<()> {
+        self.session_switcher = Some(SessionSwitcherOverlay { sessions, selected });
+        self.compose_and_send(true).await
+    }
+
+    async fn handle_update_session_switcher_selection(&mut self, selected: usize) -> Result<()> {
+        if let Some(overlay) = self.session_switcher.as_mut() {
+            overlay.selected = selected.min(overlay.sessions.len().saturating_sub(1));
+        }
+        self.compose_and_send(true).await
+    }
+
+    async fn handle_hide_session_switcher(&mut self) -> Result<()> {
+        self.session_switcher = None;
+        self.compose_and_send(true).await
     }
 
     async fn handle_pane_died(&mut self, id: usize) -> Result<()> {
         self.pane_handles.remove(&id);
+        self.pane_surfaces.remove(&id);
         let actions = self.window.remove_pane(id)?;
-        self.execute_window_actions(actions).await
+        self.execute_window_actions(actions).await?;
+        self.compose_and_send(true).await
     }
 
     async fn execute_window_actions(&mut self, actions: Vec<WindowAction>) -> Result<()> {
@@ -223,6 +281,23 @@ impl Session {
         }
 
         Ok(())
+    }
+
+    async fn compose_and_send(&mut self, force: bool) -> Result<()> {
+        let status_line_surface = self.status_line.render(self.prev_surface.width(), Some(&self.name))?;
+        let status_line = if self.status_line.enabled()? {
+            Some(&status_line_surface)
+        } else {
+            None
+        };
+        let mut surface = self.window.compose_surface(&self.pane_surfaces, status_line)?;
+        if let Some(overlay) = &self.session_switcher {
+            let overlay_surface = render_session_switcher_overlay(surface.width(), surface.height(), overlay);
+            surface.overlay_at(&overlay_surface, 0, 0);
+        }
+        let output = render_surface_diff(&self.prev_surface, &surface, force);
+        self.prev_surface = surface;
+        self.session_manager_handle.session_send_output(self.id, output).await
     }
 
     fn spawn_pane(&self, id: usize, rect: Rect) -> Result<PaneHandle> {

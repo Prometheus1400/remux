@@ -1,10 +1,6 @@
 use remux_core::events::CliEvent;
 
+#[derive(Debug)]
 pub enum ParsedEvent {
-    LocalAction(Action),
     DaemonAction(CliEvent),
-}
-
-pub enum Action {
-    SwitchSession,
 }

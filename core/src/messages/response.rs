@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{messages::traits::Message, rand, states::ServerSnapshot};
+use crate::{messages::traits::Message, rand};
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 pub struct ResponseMessage<T> {
@@ -20,7 +20,11 @@ pub enum ResponseResult<T> {
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 pub struct Attach {
-    pub initial_server_snapshot: ServerSnapshot,
+    #[serde(default)]
+    pub attached: bool,
+
+    #[serde(default)]
+    pub initial_server_snapshot: Option<serde_json::Value>,
 }
 
 // --------- builder ---------  //

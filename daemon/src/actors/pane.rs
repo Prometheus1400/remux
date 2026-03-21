@@ -13,6 +13,7 @@ use crate::{
     },
     cell::RemuxCell,
     layout::Rect,
+    render::surface::Surface,
     prelude::*,
 };
 
@@ -53,6 +54,10 @@ pub struct Pane {
     rect: Rect,
 }
 impl Pane {
+    fn should_break_after_control_event(event: &PaneEvent) -> bool {
+        matches!(event, PaneEvent::PtyDied)
+    }
+
     #[instrument(skip(session_handle, rect), name = "Pane")]
     pub fn spawn(session_handle: SessionHandle, id: usize, rect: Rect) -> Result<PaneHandle> {
         let pane = Pane::new(session_handle, id, rect)?;
@@ -125,14 +130,15 @@ impl Pane {
                                             {
                                                 error!(error=%e, pane_id=self.id, "Pane death notification failed");
                                             }
-                                            break;
+                                            if Self::should_break_after_control_event(&event) {
+                                                break;
+                                            }
                                         }
                                         Kill => {
                                             if let Err(e) = self.pty_handle.kill().await.wrap_err("failed to kill PTY from pane") {
                                                 error!(error=%e, pane_id=self.id, "Pane kill failed");
                                             }
-                                            debug!("Pty died via pane kill");
-                                            break;
+                                            debug!("Waiting for PtyDied after pane kill");
                                         }
                                         other => {
                                             let result = match other {
@@ -227,16 +233,20 @@ impl Pane {
             }
         }
 
-        let output = RemuxCell::render_diff(self.rect, &self.prev_grid, &self.curr_grid, self.force_rerender);
+        let surface = Surface::from_parts(
+            self.rect.width,
+            self.rect.height,
+            self.curr_grid.clone(),
+            None,
+            true,
+        );
         std::mem::swap(&mut self.prev_grid, &mut self.curr_grid);
         self.force_rerender = false;
 
         let (c_row, c_col) = screen.cursor_position();
-        let global_x = self.rect.x + 1 + c_col;
-        let global_y = self.rect.y + 1 + c_row;
 
         self.session_handle
-            .pane_output(self.id, Bytes::from(output), Some((global_x, global_y)))
+            .pane_output(self.id, surface, Some((c_col, c_row)))
             .await
     }
 
@@ -250,5 +260,16 @@ impl Pane {
         self.pty_handle.resize(rect).await?;
         self.vte.set_size(rect.height, rect.width);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PaneEvent;
+
+    #[test]
+    fn kill_waits_for_pty_died_before_breaking_the_loop() {
+        assert!(!super::Pane::should_break_after_control_event(&PaneEvent::Kill));
+        assert!(super::Pane::should_break_after_control_event(&PaneEvent::PtyDied));
     }
 }

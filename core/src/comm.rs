@@ -90,7 +90,6 @@ mod test {
             request::{self, DaemonRequestMessage, DaemonRequestMessageBody},
             response,
         },
-        states::ServerSnapshot,
     };
 
     #[tokio::test]
@@ -116,7 +115,8 @@ mod test {
         };
 
         let attach_response = response::Attach {
-            initial_server_snapshot: ServerSnapshot::default(),
+            attached: true,
+            initial_server_snapshot: None,
         };
         let res = ResponseBuilder::default()
             .result(ResponseResult::Success(attach_response.clone()))
@@ -140,5 +140,17 @@ mod test {
         assert_eq!(res1, attach_response);
         server.await.unwrap()?;
         Ok(())
+    }
+
+    #[test]
+    fn attach_response_deserializes_old_and_new_shapes() {
+        let old_json = r#"{"id":1,"result":{"type":"Success","initial_server_snapshot":{"sessions":[],"active_session":null}}}"#;
+        let new_json = r#"{"id":1,"result":{"type":"Success","attached":true}}"#;
+
+        let old: ResponseMessage<response::Attach> = serde_json::from_str(old_json).unwrap();
+        let new: ResponseMessage<response::Attach> = serde_json::from_str(new_json).unwrap();
+
+        assert!(matches!(old.result, ResponseResult::Success(_)));
+        assert!(matches!(new.result, ResponseResult::Success(_)));
     }
 }

@@ -3,7 +3,9 @@ mod cell;
 mod control_signals;
 mod daemon;
 mod layout;
+mod lua;
 mod prelude;
+mod render;
 
 use color_eyre::eyre::WrapErr;
 use daemon::RemuxDaemon;

@@ -12,7 +12,7 @@ pub enum CliEvent {
     SplitPaneHorizontal,
     PrevPane,
 
-    SwitchSession(String), // switch session - does nothing if session does not exist
+    OpenSessionSwitcher,
 
     TerminalResize { rows: u16, cols: u16 },
 
@@ -22,12 +22,5 @@ pub enum CliEvent {
 #[derive(Debug, Serialize, Deserialize)]
 pub enum DaemonEvent {
     Raw(Bytes), // raw response - ansii control chars
-
-    // session events
-    CurrentSessions(Vec<u32>),
-    ActiveSession(u32),
-    NewSession(u32, String),
-    DeletedSession(u32),
-    // TODO: for window id
     Disconnected,
 }

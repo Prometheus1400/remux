@@ -1,10 +1,7 @@
 use bytes::Bytes;
 use remux_core::events::CliEvent;
 
-use crate::{
-    input_parser::events::{Action, ParsedEvent},
-    prelude::*,
-};
+use crate::{input_parser::events::ParsedEvent, prelude::*};
 
 #[allow(unused)]
 const CTRL_SPACE: u8 = 0x00;
@@ -24,7 +21,7 @@ pub struct InputParser {
 
 impl InputParser {
     pub fn process(&mut self, input: &[u8]) -> Vec<ParsedEvent> {
-        use ParsedEvent::{DaemonAction, LocalAction};
+        use ParsedEvent::DaemonAction;
         self.buf.extend(input);
         let mut events = vec![];
         let mut i = 0;
@@ -66,7 +63,7 @@ impl InputParser {
                                 self.buf.drain(..2);
                             }
                             S => {
-                                events.push(LocalAction(Action::SwitchSession));
+                                events.push(DaemonAction(CliEvent::OpenSessionSwitcher));
                                 self.buf.drain(..2);
                             }
                             _ => {

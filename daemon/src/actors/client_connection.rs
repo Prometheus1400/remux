@@ -5,7 +5,6 @@ use remux_core::{
     comm,
     events::DaemonEvent,
     messages::{ResponseBuilder, ResponseResult, response},
-    states::ServerSnapshot,
 };
 use tokio::{net::UnixStream, sync::mpsc};
 use uuid::Uuid;
@@ -23,12 +22,10 @@ pub enum ClientConnectionEvent {
     Disconnect,
 
     // client side state update events
-    NewSession(u32, String),
-
     // variants related to initialization phase
     InitialAttach(u32), // invoked directly by the daemon
     // this variant is unique in that it responds to client by sending a message not an event
-    InitialAttachResult(Result<ServerSnapshot>),
+    InitialAttachResult(Result<()>),
 }
 use ClientConnectionEvent::*;
 
@@ -99,7 +96,8 @@ impl ClientConnection {
                                 InitialAttachResult(result) if matches!(self.state, ClientConnectionState::Unattached) => {
                                     match result {
                                         Ok(server_snapshot) => {
-                                            let res = ResponseBuilder::default().result(ResponseResult::Success(response::Attach{initial_server_snapshot: server_snapshot})).build();
+                                            let _ = server_snapshot;
+                                            let res = ResponseBuilder::default().result(ResponseResult::Success(response::Attach{attached: true, initial_server_snapshot: None})).build();
                                             info!(respnse=?res, "Sending response");
                                             if let Err(e) = comm::send_message(&mut self.stream, &res).await {
                                                 warn!(error=%e, client_id=%self.id, "Failed to send initial attach response");
@@ -121,8 +119,9 @@ impl ClientConnection {
                                     }
                                 }
                                 SuccessAttachToSession(session_id) => {
+                                    let _ = session_id;
                                     self.state = ClientConnectionState::Attached;
-                                    self.send_daemon_event(DaemonEvent::ActiveSession(session_id)).await.is_err()
+                                    false
                                 }
                                 FailedAttachToSession(..) => {
                                     self.send_daemon_event(DaemonEvent::Disconnected).await.is_err()
@@ -137,9 +136,6 @@ impl ClientConnection {
                                 }
                                 SessionOutput(bytes) => {
                                     self.send_session_output(bytes).await.is_err()
-                                }
-                                NewSession(session_id, session_name) => {
-                                    self.send_daemon_event(DaemonEvent::NewSession(session_id, session_name)).await.is_err()
                                 }
                                 _ => {
                                     error!(event=?event, state=?self.state, "Unhandled or invalid event for current state");
@@ -189,8 +185,8 @@ impl ClientConnection {
                                         CliEvent::PrevPane => {
                                             self.session_manager_handle.user_iterate_pane(self.id, false).await
                                         },
-                                        CliEvent::SwitchSession(session_name) => {
-                                            self.session_manager_handle.client_switch_session(self.id, session_name).await
+                                        CliEvent::OpenSessionSwitcher => {
+                                            self.session_manager_handle.client_open_session_switcher(self.id).await
                                         }
                                     };
 

@@ -4,7 +4,6 @@ use bytes::Bytes;
 use color_eyre::eyre::{self, OptionExt, WrapErr, eyre};
 use handle_macro::Handle;
 use itertools::Itertools;
-use remux_core::states::ServerSnapshot;
 use tokio::sync::mpsc;
 use tracing::Instrument;
 use uuid::Uuid;
@@ -34,6 +33,9 @@ pub enum SessionManagerEvent {
     ClientSwitchSession {
         client_id: Uuid,
         session_name: String,
+    },
+    ClientOpenSessionSwitcher {
+        client_id: Uuid,
     },
 
     // client -> session events
@@ -79,8 +81,15 @@ struct SessionManagerState {
     session_to_client_mapping: HashMap<u32, Vec<Uuid>>, // support multiple clients attached to same session
     clients: HashMap<Uuid, ClientConnectionHandle>,
     client_to_session_mapping: HashMap<Uuid, u32>, // one client can only attach to one session
+    session_switcher_state: HashMap<u32, SessionSwitcherState>,
     session_id_count: u32,
     manager_handle: SessionManagerHandle,
+}
+
+#[derive(Debug, Clone)]
+struct SessionSwitcherState {
+    sessions: Vec<String>,
+    selected: usize,
 }
 
 impl SessionManagerState {
@@ -91,6 +100,7 @@ impl SessionManagerState {
             session_to_client_mapping: Default::default(),
             clients: Default::default(),
             client_to_session_mapping: Default::default(),
+            session_switcher_state: Default::default(),
             session_id_count: Default::default(),
             manager_handle: manager_handle.clone(),
         }
@@ -99,14 +109,6 @@ impl SessionManagerState {
         let x = self.session_id_count;
         self.session_id_count += 1;
         x
-    }
-    pub fn snapshot_for_client(&self, client_id: Uuid) -> ServerSnapshot {
-        let mut server_snapshot = ServerSnapshot::default();
-        server_snapshot.set_sessions(self.sessions.values().map(|s| (s.id, s.name.clone())).collect_vec());
-        if let Some(session_id) = self.client_to_session_mapping.get(&client_id).copied() {
-            server_snapshot.set_active_session(session_id);
-        }
-        server_snapshot
     }
     // pub fn get_by_id(&self, id: u32) -> Option<&SessionInfo> {
     //     self.sessions.get(&id)
@@ -256,6 +258,9 @@ impl SessionManager {
                                 client_id,
                                 session_name,
                             } => self.handle_client_switch_session(client_id, &session_name).await,
+                            ClientOpenSessionSwitcher { client_id } => {
+                                self.handle_client_open_session_switcher(client_id).await
+                            }
                             UserInput { client_id, bytes } => {
                                 self.handle_client_send_user_input(client_id, bytes).await
                             }
@@ -311,7 +316,7 @@ impl SessionManager {
                     .get_session_by_name(session_name)
                     .ok_or_else(|| eyre!("session {session_name} should exist after attach"))?;
                 client_handle
-                    .initial_attach_result(Ok(self.state.snapshot_for_client(client_id)))
+                    .initial_attach_result(Ok(()))
                     .await?;
                 client_handle.success_attach_to_session(session_info.id).await?;
                 session_info.handle.redraw().await?;
@@ -340,7 +345,49 @@ impl SessionManager {
         client.success_attach_to_session(session.id).await
     }
 
+    async fn handle_client_open_session_switcher(&mut self, client_id: Uuid) -> Result<()> {
+        let session_id = self
+            .state
+            .client_to_session_mapping
+            .get(&client_id)
+            .copied()
+            .ok_or_eyre("client has no attached session")?;
+        let sessions = self
+            .state
+            .sessions
+            .values()
+            .map(|session| session.name.clone())
+            .sorted()
+            .collect_vec();
+        let current_name = self
+            .state
+            .sessions
+            .get(&session_id)
+            .map(|session| session.name.clone())
+            .unwrap_or_default();
+        let selected = sessions.iter().position(|name| name == &current_name).unwrap_or(0);
+        self.state.session_switcher_state.insert(
+            session_id,
+            SessionSwitcherState {
+                sessions: sessions.clone(),
+                selected,
+            },
+        );
+        self.state
+            .get_session_for_client(&client_id)?
+            .handle
+            .show_session_switcher(sessions, selected)
+            .await?;
+        Ok(())
+    }
+
     async fn handle_client_send_user_input(&mut self, client_id: Uuid, bytes: Bytes) -> Result<()> {
+        if let Some(session_id) = self.state.client_to_session_mapping.get(&client_id).copied() {
+            if self.state.session_switcher_state.contains_key(&session_id) {
+                return self.handle_session_switcher_input(client_id, session_id, bytes).await;
+            }
+        }
+
         self.state
             .get_session_for_client(&client_id)?
             .handle
@@ -391,6 +438,70 @@ impl SessionManager {
                 warn!(error=%e, session_id=*id, "Terminal resize failed for session");
             }
         }
+        Ok(())
+    }
+
+    async fn handle_session_switcher_input(&mut self, client_id: Uuid, session_id: u32, bytes: Bytes) -> Result<()> {
+        enum OverlayInputResult {
+            UpdateSelection(usize),
+            Confirm(String),
+            Cancel,
+            Ignore,
+        }
+
+        let Some(state) = self.state.session_switcher_state.get_mut(&session_id) else {
+            return Ok(());
+        };
+
+        let action = match bytes.as_ref() {
+            b"\x1b[A" => {
+                state.selected = state.selected.saturating_sub(1);
+                OverlayInputResult::UpdateSelection(state.selected)
+            }
+            b"\x1b[B" => {
+                if state.selected + 1 < state.sessions.len() {
+                    state.selected += 1;
+                }
+                OverlayInputResult::UpdateSelection(state.selected)
+            }
+            b"\r" | b"\n" => {
+                let target = state.sessions.get(state.selected).cloned().unwrap_or_default();
+                OverlayInputResult::Confirm(target)
+            }
+            b"\x1b" => {
+                OverlayInputResult::Cancel
+            }
+            _ => OverlayInputResult::Ignore,
+        };
+
+        match action {
+            OverlayInputResult::UpdateSelection(selected) => {
+                self.state
+                    .get_session_for_client(&client_id)?
+                    .handle
+                    .update_session_switcher_selection(selected)
+                    .await?;
+            }
+            OverlayInputResult::Confirm(target) => {
+                self.state.session_switcher_state.remove(&session_id);
+                self.state
+                    .get_session_for_client(&client_id)?
+                    .handle
+                    .hide_session_switcher()
+                    .await?;
+                self.handle_client_switch_session(client_id, &target).await?;
+            }
+            OverlayInputResult::Cancel => {
+                self.state.session_switcher_state.remove(&session_id);
+                self.state
+                    .get_session_for_client(&client_id)?
+                    .handle
+                    .hide_session_switcher()
+                    .await?;
+            }
+            OverlayInputResult::Ignore => {}
+        }
+
         Ok(())
     }
 }

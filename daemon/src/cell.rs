@@ -82,11 +82,15 @@ impl RemuxCell {
         const VISIBLE_ON_WHITESPACE: u8 = INVERSE | UNDERLINE;
 
         for r in 0..rows {
+            let row_start = r * cols;
+            let row_end = row_start + cols;
+            let prev_has_row = prev_grid.len() >= row_end;
+
             // first pass is a backwards pass to find the last index with a visible change
             // we use this to clear empty space
             let mut last_char_index = 0;
             for c in (0..cols).rev() {
-                let cell = &curr_grid[r * cols + c];
+                let cell = &curr_grid[row_start + c];
 
                 let is_visually_empty = cell.contents[0] == SPACE
                     && cell.bg_color == default_color_bytes
@@ -103,8 +107,8 @@ impl RemuxCell {
                 // if we are past the last useful char, we check if there is content already there
                 // if there is, we check if it was visible content
                 if c >= last_char_index {
-                    let prev_has_content = if r < prev_grid.len() && c < prev_grid[0].len() {
-                        let prev_cell = &prev_grid[r * cols + c];
+                    let prev_has_content = if prev_has_row {
+                        let prev_cell = &prev_grid[row_start + c];
                         let prev_bg_default = prev_cell.bg_color == default_color_bytes;
 
                         prev_cell.contents[0] != SPACE
@@ -143,15 +147,15 @@ impl RemuxCell {
 
                 // if we are at a useful cell, grab it
                 // then we check if its a spacer, if it is we skip it
-                let cell = &curr_grid[r * cols + c];
+                let cell = &curr_grid[row_start + c];
                 if cell.has_attribute(WIDE_SPACER) {
                     continue;
                 }
 
                 // if this is a NOT full rerender and its within the bound of the previous
                 // grid, we do an equality check and skip processing if nothing has changed
-                if !force_rerender && r < prev_grid.len() && c < prev_grid[0].len() {
-                    if cell == &prev_grid[r * cols + c] {
+                if !force_rerender && prev_has_row {
+                    if cell == &prev_grid[row_start + c] {
                         continue;
                     }
                 }
@@ -251,6 +255,10 @@ impl RemuxCell {
 
     pub fn len(&self) -> usize {
         usize::from(self.len & LEN_BITS)
+    }
+
+    pub fn content_bytes(&self) -> &[u8] {
+        &self.contents[..self.len()]
     }
 
     pub fn set_content(&mut self, contents: &[u8]) {
@@ -379,5 +387,40 @@ fn u32_color_to_ansi(output: &mut Vec<u8>, color: u32, is_fg: bool) {
             output.push(b'm');
         }
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rect(width: u16, height: u16) -> Rect {
+        Rect {
+            x: 0,
+            y: 0,
+            width,
+            height,
+        }
+    }
+
+    fn cells(contents: &[&[u8]]) -> Vec<RemuxCell> {
+        contents
+            .iter()
+            .map(|content| {
+                let mut cell = RemuxCell::default();
+                cell.set_content(content);
+                cell
+            })
+            .collect()
+    }
+
+    #[test]
+    fn render_diff_skips_unchanged_cells_using_grid_width_not_cell_len() {
+        let prev = cells(&[b"a", b"b", b"c"]);
+        let curr = cells(&[b"a", b"b", b"c"]);
+
+        let output = RemuxCell::render_diff(rect(3, 1), &prev, &curr, false);
+
+        assert_eq!(output, b"\x1b[0m".to_vec());
     }
 }
