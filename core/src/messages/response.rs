@@ -13,7 +13,7 @@ impl<T: Serialize + for<'de> Deserialize<'de>> Message for ResponseMessage<T> {}
 #[serde(tag = "type")]
 pub enum ResponseResult<T> {
     Success(T),
-    Failure(String),
+    Failure { message: String },
 }
 
 // --------- message bodies ---------  //

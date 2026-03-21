@@ -41,15 +41,15 @@ pub struct Window {
 }
 
 impl Window {
-    pub fn new(status_line_enabled: bool) -> Result<(Self, Vec<WindowAction>)> {
+    pub fn new(status_line_enabled: bool, rows: u16, cols: u16) -> Result<(Self, Vec<WindowAction>)> {
         let init_pane_id = 0;
         let layout = LayoutNode::Pane { id: init_pane_id };
 
         let root_rect = Rect {
             x: 0,
             y: 0,
-            width: 80,
-            height: 24,
+            width: cols,
+            height: rows,
         };
 
         let mut layout_sizing_map = BTreeMap::new();

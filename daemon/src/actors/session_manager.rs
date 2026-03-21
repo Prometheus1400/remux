@@ -26,6 +26,8 @@ pub enum SessionManagerEvent {
         client_handle: ClientConnectionHandle,
         session_name: Option<String>,
         create_session: bool,
+        rows: u16,
+        cols: u16,
     },
     ClientDisconnect {
         client_id: Uuid,
@@ -136,13 +138,13 @@ impl SessionManagerState {
             .collect_vec())
     }
 
-    pub fn create_new_session(&mut self, name: Option<&str>) -> Result<&SessionInfo> {
+    pub fn create_new_session(&mut self, name: Option<&str>, rows: u16, cols: u16) -> Result<&SessionInfo> {
         if name.and_then(|n| self.get_session_by_name(n)).is_some() {
             Err(eyre!("duplicate session"))
         } else {
             let id = self.new_session_id();
             let name = name.map(|n| n.to_owned()).unwrap_or(id.to_string());
-            let handle = Session::spawn(id, name.clone(), self.manager_handle.clone())?;
+            let handle = Session::spawn(id, name.clone(), self.manager_handle.clone(), rows, cols)?;
             self.session_name_to_id.insert(name.clone(), id);
             self.sessions.insert(id, SessionInfo { handle, name, id });
             self.sessions
@@ -157,10 +159,12 @@ impl SessionManagerState {
         client_handle: ClientConnectionHandle,
         session_name: &str,
         create: bool,
+        rows: u16,
+        cols: u16,
     ) -> Result<()> {
         let mut id_opt = self.get_session_by_name(session_name).map(|info| info.id);
         if id_opt.is_none() && create {
-            id_opt = Some(self.create_new_session(Some(session_name))?.id);
+            id_opt = Some(self.create_new_session(Some(session_name), rows, cols)?.id);
         }
 
         if let Some(id) = id_opt {
@@ -244,12 +248,16 @@ impl SessionManager {
                                 client_handle,
                                 session_name,
                                 create_session,
+                                rows,
+                                cols,
                             } => {
                                 self.handle_client_connect(
                                     client_id,
                                     client_handle,
                                     session_name.as_deref(),
                                     create_session,
+                                    rows,
+                                    cols,
                                 )
                                 .await
                             }
@@ -304,17 +312,20 @@ impl SessionManager {
         client_handle: ClientConnectionHandle,
         session_name: Option<&str>,
         create_session: bool,
+        rows: u16,
+        cols: u16,
     ) -> Result<()> {
         let session_name = session_name.ok_or(eyre!("no session name"))?;
         match self
             .state
-            .attach_client(client_id, client_handle.clone(), session_name, create_session)
+            .attach_client(client_id, client_handle.clone(), session_name, create_session, rows, cols)
         {
             Ok(_) => {
                 let session_info = self
                     .state
                     .get_session_by_name(session_name)
                     .ok_or_else(|| eyre!("session {session_name} should exist after attach"))?;
+                session_info.handle.terminal_resize(rows, cols).await?;
                 client_handle
                     .initial_attach_result(Ok(()))
                     .await?;
@@ -339,7 +350,7 @@ impl SessionManager {
     async fn handle_client_switch_session(&mut self, client_id: Uuid, session_name: &str) -> Result<()> {
         let client = self.state.detach_client(client_id).ok_or_eyre("no such client")?;
         self.state
-            .attach_client(client_id, client.clone(), session_name, false)?;
+            .attach_client(client_id, client.clone(), session_name, false, 0, 0)?;
         let session = self.state.get_session_for_client(&client_id)?;
         session.handle.redraw().await?;
         client.success_attach_to_session(session.id).await

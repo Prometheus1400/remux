@@ -12,3 +12,6 @@ quote = "1.0"
 proc-macro2 = "1.0"
 tokio = { version = "1", features = ["full"] } # needed for generated handle methods
 bytes = "1"
+
+[dev-dependencies]
+trybuild = "1.0"

@@ -76,6 +76,31 @@ impl Surface {
         }
     }
 
+    pub fn overlay_transparent_at(&mut self, other: &Surface, x: u16, y: u16) {
+        let transparent = RemuxCell::default();
+
+        for row in 0..other.height {
+            for col in 0..other.width {
+                let Some(source) = other.cell(col, row) else {
+                    continue;
+                };
+                if source == &transparent {
+                    continue;
+                }
+
+                let Some(dest) = self.cell_mut(x + col, y + row) else {
+                    continue;
+                };
+                *dest = source.clone();
+            }
+        }
+
+        if let Some((cursor_x, cursor_y)) = other.cursor {
+            self.cursor = Some((x + cursor_x, y + cursor_y));
+            self.cursor_visible = other.cursor_visible;
+        }
+    }
+
     pub fn set_cursor(&mut self, cursor: Option<(u16, u16)>, visible: bool) {
         self.cursor = cursor;
         self.cursor_visible = visible;

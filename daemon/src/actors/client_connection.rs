@@ -50,9 +50,11 @@ impl ClientConnection {
         stream: UnixStream,
         session_manager_handle: SessionManagerHandle,
         initial_session_name: &str,
+        rows: u16,
+        cols: u16,
     ) -> Result<ClientConnectionHandle> {
         let client = Self::new(id, stream, session_manager_handle);
-        client.run(initial_session_name)
+        client.run(initial_session_name, rows, cols)
     }
     fn new(id: Uuid, stream: UnixStream, session_manager_handle: SessionManagerHandle) -> Self {
         let (tx, rx) = mpsc::channel(10);
@@ -67,7 +69,7 @@ impl ClientConnection {
             state: ClientConnectionState::Unattached,
         }
     }
-    fn run(mut self, initial_session_name: &str) -> Result<ClientConnectionHandle> {
+    fn run(mut self, initial_session_name: &str, rows: u16, cols: u16) -> Result<ClientConnectionHandle> {
         let handle_clone = self.handle.clone();
         let session_name = initial_session_name.to_owned();
         let client_id = self.id;
@@ -75,7 +77,7 @@ impl ClientConnection {
             async move {
                 let handle = self.handle.clone();
                 self.session_manager_handle
-                    .client_connect(self.id, handle.clone(), Some(session_name), true)
+                    .client_connect(self.id, handle.clone(), Some(session_name), true, rows, cols)
                     .await
                     .wrap_err("failed to register client with session manager")?;
                 loop {
@@ -108,7 +110,11 @@ impl ClientConnection {
                                             }
                                         }
                                         Err(e) => {
-                                            let response = ResponseBuilder::default().result(ResponseResult::Failure::<()>(e.to_string())).build();
+                                            let response = ResponseBuilder::default()
+                                                .result(ResponseResult::Failure::<()> {
+                                                    message: e.to_string(),
+                                                })
+                                                .build();
                                             if let Err(send_err) = comm::send_message(&mut self.stream, &response).await {
                                                 warn!(error=%send_err, client_id=%self.id, "Failed to send initial attach failure");
                                                 true

@@ -39,6 +39,8 @@ pub struct Attach {
     pub id: Uuid,
     pub session_name: String,
     pub create: bool,
+    pub rows: u16,
+    pub cols: u16,
 }
 impl RequestBody for Attach {
     type ResponseBody = response::Attach;

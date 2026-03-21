@@ -169,3 +169,103 @@ impl LayoutNode {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use super::{LayoutNode, Rect, SplitDirection};
+
+    #[test]
+    fn add_split_replaces_target_pane_with_split() {
+        let mut root = LayoutNode::Pane { id: 1 };
+
+        assert!(root.add_split(1, 2, SplitDirection::Vertical));
+
+        match root {
+            LayoutNode::Split {
+                direction: SplitDirection::Vertical,
+                left,
+                right,
+                ..
+            } => {
+                assert!(matches!(*left, LayoutNode::Pane { id: 1 }));
+                assert!(matches!(*right, LayoutNode::Pane { id: 2 }));
+            }
+            other => panic!("expected split node, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn remove_node_collapses_single_child_split() {
+        let layout = LayoutNode::Split {
+            direction: SplitDirection::Horizontal,
+            left: Box::new(LayoutNode::Pane { id: 1 }),
+            right: Box::new(LayoutNode::Pane { id: 2 }),
+            left_weight: 1,
+            right_weight: 1,
+        };
+
+        let updated = layout.remove_node(1).expect("right pane should remain");
+
+        assert!(matches!(updated, LayoutNode::Pane { id: 2 }));
+    }
+
+    #[test]
+    fn vertical_layout_splits_width_and_reserves_border_column() {
+        let layout = LayoutNode::Split {
+            direction: SplitDirection::Vertical,
+            left: Box::new(LayoutNode::Pane { id: 1 }),
+            right: Box::new(LayoutNode::Pane { id: 2 }),
+            left_weight: 1,
+            right_weight: 1,
+        };
+        let mut results = BTreeMap::new();
+
+        layout
+            .calculate_layout(
+                Rect {
+                    x: 0,
+                    y: 0,
+                    width: 10,
+                    height: 4,
+                },
+                &mut results,
+            )
+            .expect("layout should calculate");
+
+        let left = results.get(&1).expect("left pane should exist");
+        let right = results.get(&2).expect("right pane should exist");
+        assert_eq!((left.x, left.width), (0, 4));
+        assert_eq!((right.x, right.width), (5, 5));
+    }
+
+    #[test]
+    fn horizontal_layout_splits_height_and_reserves_border_row() {
+        let layout = LayoutNode::Split {
+            direction: SplitDirection::Horizontal,
+            left: Box::new(LayoutNode::Pane { id: 1 }),
+            right: Box::new(LayoutNode::Pane { id: 2 }),
+            left_weight: 1,
+            right_weight: 3,
+        };
+        let mut results = BTreeMap::new();
+
+        layout
+            .calculate_layout(
+                Rect {
+                    x: 2,
+                    y: 3,
+                    width: 6,
+                    height: 9,
+                },
+                &mut results,
+            )
+            .expect("layout should calculate");
+
+        let top = results.get(&1).expect("top pane should exist");
+        let bottom = results.get(&2).expect("bottom pane should exist");
+        assert_eq!((top.y, top.height), (3, 2));
+        assert_eq!((bottom.y, bottom.height), (6, 6));
+    }
+}

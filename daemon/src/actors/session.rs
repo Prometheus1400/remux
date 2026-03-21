@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use bytes::Bytes;
 use color_eyre::eyre::WrapErr;
 use handle_macro::Handle;
-use tokio::sync::mpsc;
+use tokio::{sync::mpsc, time::MissedTickBehavior};
 use tracing::{Instrument, Span};
 
 use crate::{
@@ -60,6 +60,8 @@ pub enum SessionEvent {
 }
 use SessionEvent::*;
 
+const STATUS_LINE_REFRESH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(1);
+
 pub struct Session {
     id: u32,
     name: String,
@@ -77,16 +79,22 @@ pub struct Session {
 
 impl Session {
     #[instrument(parent=None, skip(session_manager_handle), name="Session")]
-    pub fn spawn(id: u32, name: String, session_manager_handle: SessionManagerHandle) -> Result<SessionHandle> {
-        let session = Session::new(id, name, session_manager_handle)?;
+    pub fn spawn(
+        id: u32,
+        name: String,
+        session_manager_handle: SessionManagerHandle,
+        rows: u16,
+        cols: u16,
+    ) -> Result<SessionHandle> {
+        let session = Session::new(id, name, session_manager_handle, rows, cols)?;
         session.run()
     }
 
-    fn new(id: u32, name: String, session_manager_handle: SessionManagerHandle) -> Result<Self> {
+    fn new(id: u32, name: String, session_manager_handle: SessionManagerHandle, rows: u16, cols: u16) -> Result<Self> {
         let (tx, rx) = mpsc::channel(10);
         let handle = SessionHandle { tx };
         let status_line = StatusLineRuntime::load_default()?;
-        let (window, startup_actions) = Window::new(status_line.enabled()?)?;
+        let (window, startup_actions) = Window::new(status_line.enabled()?, rows, cols)?;
 
         Ok(Self {
             id,
@@ -97,7 +105,7 @@ impl Session {
             window,
             pane_handles: BTreeMap::new(),
             pane_surfaces: BTreeMap::new(),
-            prev_surface: Surface::new(80, 24),
+            prev_surface: Surface::new(cols, rows),
             status_line,
             session_switcher: None,
             startup_actions,
@@ -114,61 +122,75 @@ impl Session {
                     .wrap_err("failed to execute session startup actions")?;
                 self.compose_and_send(true).await?;
 
+                let status_line_enabled = self.status_line.enabled()?;
+                let mut status_line_tick = tokio::time::interval(STATUS_LINE_REFRESH_INTERVAL);
+                status_line_tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
+                status_line_tick.tick().await;
+
                 loop {
-                    if let Some(event) = self.rx.recv().await {
-                        match &event {
-                            PaneOutput { .. } | UserInput(..) => {
-                                trace!(event=?event);
-                            }
-                            _ => {
-                                info!(event=?event);
+                    tokio::select! {
+                        _ = status_line_tick.tick(), if status_line_enabled => {
+                            if let Err(e) = self.compose_and_send(false).await {
+                                error!(error=%e, session_id=self.id, "Status line refresh failed");
                             }
                         }
+                        event = self.rx.recv() => {
+                            if let Some(event) = event {
+                                match &event {
+                                    PaneOutput { .. } | UserInput(..) => {
+                                        trace!(event=?event);
+                                    }
+                                    _ => {
+                                        info!(event=?event);
+                                    }
+                                }
 
-                        match event {
-                            Kill => {
-                                self.kill_all_panes().await;
+                                match event {
+                                    Kill => {
+                                        self.kill_all_panes().await;
+                                        break;
+                                    }
+                                    RenameSession(name) => {
+                                        let span = Span::current();
+                                        self.name = name.clone();
+                                        span.record("name", name);
+                                    }
+                                    other => {
+                                        let result = match other {
+                                            UserInput(bytes) => self.handle_user_input(bytes).await,
+                                            UserConnection => self.handle_new_connection().await,
+                                            UserSplitPane { direction } => self.handle_split_pane(direction).await,
+                                            UserIteratePane { is_next } => self.handle_iterate_pane(is_next).await,
+                                            UserKillPane => self.handle_kill_pane().await,
+                                            Redraw => {
+                                                let actions = self.window.redraw()?;
+                                                self.execute_window_actions(actions).await?;
+                                                self.compose_and_send(true).await
+                                            }
+                                            TerminalResize { rows, cols } => self.handle_terminal_resize(rows, cols).await,
+                                            ShowSessionSwitcher { sessions, selected } => {
+                                                self.handle_show_session_switcher(sessions, selected).await
+                                            }
+                                            UpdateSessionSwitcherSelection { selected } => {
+                                                self.handle_update_session_switcher_selection(selected).await
+                                            }
+                                            HideSessionSwitcher => self.handle_hide_session_switcher().await,
+                                            PaneOutput { id, surface, cursor } => {
+                                                self.handle_pane_output(id, surface, cursor).await
+                                            }
+                                            PaneDied { id } => self.handle_pane_died(id).await,
+                                            RenameSession(..) | Kill => Ok(()),
+                                        };
+
+                                        if let Err(e) = result {
+                                            error!(error=%e, session_id=self.id, "Session event handling failed");
+                                        }
+                                    }
+                                }
+                            } else {
                                 break;
                             }
-                            RenameSession(name) => {
-                                let span = Span::current();
-                                self.name = name.clone();
-                                span.record("name", name);
-                            }
-                            other => {
-                                let result = match other {
-                                    UserInput(bytes) => self.handle_user_input(bytes).await,
-                                    UserConnection => self.handle_new_connection().await,
-                                    UserSplitPane { direction } => self.handle_split_pane(direction).await,
-                                    UserIteratePane { is_next } => self.handle_iterate_pane(is_next).await,
-                                    UserKillPane => self.handle_kill_pane().await,
-                                    Redraw => {
-                                        let actions = self.window.redraw()?;
-                                        self.execute_window_actions(actions).await?;
-                                        self.compose_and_send(true).await
-                                    }
-                                    TerminalResize { rows, cols } => self.handle_terminal_resize(rows, cols).await,
-                                    ShowSessionSwitcher { sessions, selected } => {
-                                        self.handle_show_session_switcher(sessions, selected).await
-                                    }
-                                    UpdateSessionSwitcherSelection { selected } => {
-                                        self.handle_update_session_switcher_selection(selected).await
-                                    }
-                                    HideSessionSwitcher => self.handle_hide_session_switcher().await,
-                                    PaneOutput { id, surface, cursor } => {
-                                        self.handle_pane_output(id, surface, cursor).await
-                                    }
-                                    PaneDied { id } => self.handle_pane_died(id).await,
-                                    RenameSession(..) | Kill => Ok(()),
-                                };
-
-                                if let Err(e) = result {
-                                    error!(error=%e, session_id=self.id, "Session event handling failed");
-                                }
-                            }
                         }
-                    } else {
-                        break;
                     }
                 }
 
@@ -212,7 +234,7 @@ impl Session {
         let actions = self.window.resize_terminal(rows, cols)?;
         self.prev_surface = Surface::new(cols, rows);
         self.execute_window_actions(actions).await?;
-        self.compose_and_send(false).await
+        self.compose_and_send(true).await
     }
 
     async fn handle_pane_output(&mut self, id: usize, surface: Surface, cursor: Option<(u16, u16)>) -> Result<()> {
@@ -293,7 +315,7 @@ impl Session {
         let mut surface = self.window.compose_surface(&self.pane_surfaces, status_line)?;
         if let Some(overlay) = &self.session_switcher {
             let overlay_surface = render_session_switcher_overlay(surface.width(), surface.height(), overlay);
-            surface.overlay_at(&overlay_surface, 0, 0);
+            surface.overlay_transparent_at(&overlay_surface, 0, 0);
         }
         let output = render_surface_diff(&self.prev_surface, &surface, force);
         self.prev_surface = surface;

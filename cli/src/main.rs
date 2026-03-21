@@ -8,7 +8,7 @@ use std::{fs::File, path::Path};
 
 use clap::Parser;
 use color_eyre::eyre::WrapErr;
-use crossterm::terminal::disable_raw_mode;
+use crossterm::terminal::{disable_raw_mode, size as terminal_size};
 use remux_core::{
     comm,
     daemon_utils::get_sock_path,
@@ -139,6 +139,7 @@ async fn run(command: Commands) -> Result<()> {
     debug!("Running command");
     match command {
         Commands::Attach { session_name } => {
+            let (cols, rows) = terminal_size().wrap_err("failed to read terminal size for attach request")?;
             attach(
                 stream,
                 RequestBuilder::default()
@@ -146,6 +147,8 @@ async fn run(command: Commands) -> Result<()> {
                         id: Uuid::new_v4(),
                         session_name,
                         create: true,
+                        rows,
+                        cols,
                     })
                     .build(),
             )

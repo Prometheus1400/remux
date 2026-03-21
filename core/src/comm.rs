@@ -70,7 +70,7 @@ where
     // }
     match res.result {
         ResponseResult::Success(body) => Ok(body),
-        ResponseResult::Failure(msg) => Err(Error::Response(ResponseError::Status(msg))),
+        ResponseResult::Failure { message } => Err(Error::Response(ResponseError::Status(message))),
     }
 }
 
@@ -85,6 +85,7 @@ mod test {
     use super::*;
     use crate::{
         constants::TEMP_SOCK_DIR,
+        events::{CliEvent, DaemonEvent},
         messages::{
             RequestBuilder, ResponseBuilder,
             request::{self, DaemonRequestMessage, DaemonRequestMessageBody},
@@ -107,6 +108,8 @@ mod test {
             id: Uuid::new_v4(),
             session_name: "session".to_owned(),
             create: true,
+            rows: 24,
+            cols: 80,
         };
         let cli_req = RequestBuilder::default().body(attach.clone()).build();
         let daemon_req = DaemonRequestMessage {
@@ -152,5 +155,92 @@ mod test {
 
         assert!(matches!(old.result, ResponseResult::Success(_)));
         assert!(matches!(new.result, ResponseResult::Success(_)));
+    }
+
+    #[tokio::test]
+    async fn cli_event_round_trip_over_stream() -> Result<()> {
+        let (mut sender, mut receiver) = UnixStream::pair()?;
+
+        let send = tokio::spawn(async move { send_event(&mut sender, CliEvent::TerminalResize { rows: 24, cols: 80 }).await });
+        let event = recv_cli_event(&mut receiver).await?;
+
+        send.await.unwrap()?;
+        match event {
+            CliEvent::TerminalResize { rows, cols } => {
+                assert_eq!((rows, cols), (24, 80));
+            }
+            other => panic!("unexpected event: {other:?}"),
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn daemon_event_round_trip_over_stream() -> Result<()> {
+        let (mut sender, mut receiver) = UnixStream::pair()?;
+
+        let send = tokio::spawn(async move { send_event(&mut sender, DaemonEvent::Disconnected).await });
+        let event = recv_daemon_event(&mut receiver).await?;
+
+        send.await.unwrap()?;
+        assert!(matches!(event, DaemonEvent::Disconnected));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn send_and_recv_message_returns_response_failure_as_error() -> Result<()> {
+        let (mut client, mut server) = UnixStream::pair()?;
+        let attach = request::Attach {
+            id: Uuid::new_v4(),
+            session_name: "session".to_owned(),
+            create: true,
+            rows: 24,
+            cols: 80,
+        };
+        let cli_req = RequestBuilder::default().body(attach).build();
+        let response = ResponseBuilder::default()
+            .result(ResponseResult::<response::Attach>::Failure {
+                message: "attach failed".to_owned(),
+            })
+            .build();
+
+        let server_task = tokio::spawn(async move {
+            let _: DaemonRequestMessage = read_message(&mut server).await.unwrap();
+            send_message(&mut server, &response).await.unwrap();
+        });
+
+        let err = send_and_recv_message(&mut client, &cli_req).await.unwrap_err();
+        server_task.await.unwrap();
+        assert!(matches!(err, Error::Response(ResponseError::Status(message)) if message == "attach failed"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn read_message_fails_for_truncated_payload() -> Result<()> {
+        let (mut writer, mut reader) = UnixStream::pair()?;
+
+        let writer_task = tokio::spawn(async move {
+            writer.write_all(&5u32.to_be_bytes()).await.unwrap();
+            writer.write_all(b"{}").await.unwrap();
+        });
+
+        let err = read_message::<ResponseMessage<response::Attach>>(&mut reader).await.unwrap_err();
+        writer_task.await.unwrap();
+        assert!(matches!(err, Error::IO(_)));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn recv_event_fails_for_invalid_json() -> Result<()> {
+        let (mut writer, mut reader) = UnixStream::pair()?;
+
+        let writer_task = tokio::spawn(async move {
+            writer.write_all(&4u32.to_be_bytes()).await.unwrap();
+            writer.write_all(b"nope").await.unwrap();
+        });
+
+        let err = recv_cli_event(&mut reader).await.unwrap_err();
+        writer_task.await.unwrap();
+        assert!(matches!(err, Error::SerializationError(_)));
+        Ok(())
     }
 }

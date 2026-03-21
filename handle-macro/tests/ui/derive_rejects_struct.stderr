@@ -1,0 +1,5 @@
+error: ActorHandle can only be derived for enums
+ --> tests/ui/derive_rejects_struct.rs:4:1
+  |
+4 | struct NotAnEnum;
+  | ^^^^^^^^^^^^^^^^^

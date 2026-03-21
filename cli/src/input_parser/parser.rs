@@ -35,7 +35,6 @@ impl InputParser {
                         if i > 0 {
                             let old: Vec<u8> = self.buf.drain(..i).collect();
                             events.push(DaemonAction(CliEvent::Raw(Bytes::from(old))));
-                            i = 0;
                         }
                         match b_next {
                             PERCENT => {
@@ -67,7 +66,7 @@ impl InputParser {
                                 self.buf.drain(..2);
                             }
                             _ => {
-                                self.buf.drain(..=i);
+                                self.buf.drain(..2);
                             }
                         }
                         i = 0;
@@ -76,6 +75,7 @@ impl InputParser {
                         if !old.is_empty() {
                             events.push(DaemonAction(CliEvent::Raw(Bytes::from(old))));
                         }
+                        i = 0;
                         break;
                     }
                 }
@@ -89,5 +89,100 @@ impl InputParser {
         }
         trace!("return from process with remaining {:?}", self.buf);
         events
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use bytes::Bytes;
+    use remux_core::events::CliEvent;
+
+    use super::InputParser;
+    use crate::input_parser::ParsedEvent;
+
+    fn assert_raw(event: &ParsedEvent, expected: &[u8]) {
+        match event {
+            ParsedEvent::DaemonAction(CliEvent::Raw(bytes)) => assert_eq!(bytes, &Bytes::copy_from_slice(expected)),
+            other => panic!("expected raw event, got {other:?}"),
+        }
+    }
+
+    fn assert_command(event: &ParsedEvent, predicate: impl FnOnce(&CliEvent) -> bool) {
+        match event {
+            ParsedEvent::DaemonAction(cli_event) => assert!(predicate(cli_event), "unexpected event: {cli_event:?}"),
+        }
+    }
+
+    #[test]
+    fn raw_input_passes_through_without_prefix() {
+        let mut parser = InputParser::default();
+
+        let events = parser.process(b"hello");
+
+        assert_eq!(events.len(), 1);
+        assert_raw(&events[0], b"hello");
+    }
+
+    #[test]
+    fn prefix_split_across_calls_is_buffered() {
+        let mut parser = InputParser::default();
+
+        let first = parser.process(&[0x02]);
+        let second = parser.process(b"n");
+
+        assert!(first.is_empty());
+        assert_eq!(second.len(), 1);
+        assert_command(&second[0], |event| matches!(event, CliEvent::NextPane));
+    }
+
+    #[test]
+    fn raw_before_prefix_is_emitted_before_command() {
+        let mut parser = InputParser::default();
+
+        let events = parser.process(b"ab\x02d");
+
+        assert_eq!(events.len(), 2);
+        assert_raw(&events[0], b"ab");
+        assert_command(&events[1], |event| matches!(event, CliEvent::Detach));
+    }
+
+    #[test]
+    fn unknown_prefix_command_is_dropped_without_corrupting_later_bytes() {
+        let mut parser = InputParser::default();
+
+        let events = parser.process(b"a\x02?b");
+
+        assert_eq!(events.len(), 2);
+        assert_raw(&events[0], b"a");
+        assert_raw(&events[1], b"b");
+    }
+
+    #[test]
+    fn multiple_commands_in_one_buffer_are_all_emitted() {
+        let mut parser = InputParser::default();
+
+        let events = parser.process(b"\x02%\x02\"\x02n\x02p\x02x\x02d\x02s");
+
+        assert_eq!(events.len(), 7);
+        assert_command(&events[0], |event| matches!(event, CliEvent::SplitPaneVertical));
+        assert_command(&events[1], |event| matches!(event, CliEvent::SplitPaneHorizontal));
+        assert_command(&events[2], |event| matches!(event, CliEvent::NextPane));
+        assert_command(&events[3], |event| matches!(event, CliEvent::PrevPane));
+        assert_command(&events[4], |event| matches!(event, CliEvent::KillPane));
+        assert_command(&events[5], |event| matches!(event, CliEvent::Detach));
+        assert_command(&events[6], |event| matches!(event, CliEvent::OpenSessionSwitcher));
+    }
+
+    #[test]
+    fn trailing_prefix_keeps_only_the_pending_prefix_buffered() {
+        let mut parser = InputParser::default();
+
+        let first = parser.process(b"ok\x02");
+        let second = parser.process(b"p");
+
+        assert_eq!(first.len(), 1);
+        assert_raw(&first[0], b"ok");
+        assert_eq!(second.len(), 1);
+        assert_command(&second[0], |event| matches!(event, CliEvent::PrevPane));
     }
 }

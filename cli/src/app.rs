@@ -57,7 +57,6 @@ impl App {
         let (input_tx, mut input_rx) = mpsc::channel::<Input>(100);
         self.bg_tasks.extend(input::start_input_listeners(input_tx));
         self.capture_terminal_size()?;
-        self.send_terminal_resize().await?;
 
         loop {
             tokio::select! {

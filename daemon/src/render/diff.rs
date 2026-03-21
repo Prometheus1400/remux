@@ -2,9 +2,13 @@ use bytes::Bytes;
 
 use crate::{
     cell::{set_cursor_position, RemuxCell},
+    control_signals::CLEAR,
     layout::Rect,
     render::surface::Surface,
 };
+
+const SHOW_CURSOR: &[u8] = b"\x1b[?25h";
+const HIDE_CURSOR: &[u8] = b"\x1b[?25l";
 
 pub fn render_surface_diff(prev: &Surface, curr: &Surface, force: bool) -> Bytes {
     let rect = Rect {
@@ -14,12 +18,20 @@ pub fn render_surface_diff(prev: &Surface, curr: &Surface, force: bool) -> Bytes
         height: curr.height(),
     };
 
-    let mut output = RemuxCell::render_diff(rect, prev.cells(), curr.cells(), force);
+    let mut output = Vec::new();
+    if force {
+        output.extend_from_slice(CLEAR);
+    }
+
+    output.extend(RemuxCell::render_diff(rect, prev.cells(), curr.cells(), force));
 
     if curr.cursor_visible() {
+        output.extend_from_slice(SHOW_CURSOR);
         if let Some((x, y)) = curr.cursor() {
             set_cursor_position(&mut output, x + 1, y + 1);
         }
+    } else {
+        output.extend_from_slice(HIDE_CURSOR);
     }
 
     Bytes::from(output)
