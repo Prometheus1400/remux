@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use bytes::Bytes;
+use color_eyre::eyre::WrapErr;
 use handle_macro::Handle;
 use tokio::{sync::mpsc, time::MissedTickBehavior};
 use tracing::Instrument;
@@ -8,7 +9,7 @@ use tracing::Instrument;
 use crate::{
     actors::{
         pty::{Pty, PtyHandle},
-        window::WindowHandle,
+        session::SessionHandle,
     },
     cell::RemuxCell,
     layout::Rect,
@@ -37,7 +38,7 @@ pub enum PaneState {
 pub struct Pane {
     id: usize,
     handle: PaneHandle,
-    window_handle: WindowHandle,
+    session_handle: SessionHandle,
     rx: mpsc::Receiver<PaneEvent>,
     pane_state: PaneState,
     pty_handle: PtyHandle,
@@ -52,12 +53,12 @@ pub struct Pane {
     rect: Rect,
 }
 impl Pane {
-    #[instrument(skip(window_handle, rect), name = "Pane")]
-    pub fn spawn(window_handle: WindowHandle, id: usize, rect: Rect) -> Result<PaneHandle> {
-        let pane = Pane::new(window_handle, id, rect)?;
+    #[instrument(skip(session_handle, rect), name = "Pane")]
+    pub fn spawn(session_handle: SessionHandle, id: usize, rect: Rect) -> Result<PaneHandle> {
+        let pane = Pane::new(session_handle, id, rect)?;
         pane.run()
     }
-    fn new(window_handle: WindowHandle, id: usize, rect: Rect) -> Result<Self> {
+    fn new(session_handle: SessionHandle, id: usize, rect: Rect) -> Result<Self> {
         let (tx, rx) = mpsc::channel(10);
         let handle = PaneHandle { tx };
 
@@ -70,7 +71,7 @@ impl Pane {
         Ok(Self {
             id,
             handle,
-            window_handle,
+            session_handle,
             pty_handle,
             rx,
             force_rerender: true,
@@ -88,7 +89,7 @@ impl Pane {
         render_ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
         let mut is_dirty = true;
-        let _task = tokio::spawn(
+        let _task: DaemonTask = tokio::spawn(
             async move {
                 loop {
                     tokio::select! {
@@ -114,40 +115,60 @@ impl Pane {
                                         }
                                     }
                                     match event {
-                                        UserInput(bytes) => {
-                                            self.handle_input(bytes).await.unwrap();
-                                        }
-                                        PtyOutput(bytes) => {
-                                            if let Err(e) = self.handle_pty_output(bytes).await {
-                                                error!("Error while handling PTY output: {}", e);
-                                            }
-                                            is_dirty = true;
-                                        }
                                         PtyDied => {
                                             debug!("Pty died via exit");
-                                            self.window_handle.kill_pane().await.unwrap();
+                                            if let Err(e) = self
+                                                .session_handle
+                                                .pane_died(self.id)
+                                                .await
+                                                .wrap_err("failed to notify session that pane died")
+                                            {
+                                                error!(error=%e, pane_id=self.id, "Pane death notification failed");
+                                            }
                                             break;
                                         }
                                         Kill => {
-                                            self.pty_handle.kill().await.unwrap();
+                                            if let Err(e) = self.pty_handle.kill().await.wrap_err("failed to kill PTY from pane") {
+                                                error!(error=%e, pane_id=self.id, "Pane kill failed");
+                                            }
                                             debug!("Pty died via pane kill");
                                             break;
                                         }
-                                        Render => {
-                                            is_dirty = true;
-                                        }
-                                        Rerender => {
-                                            self.force_rerender = true;
-                                        }
-                                        Resize { rect } => {
-                                            self.handle_resize(rect).await.unwrap();
-                                            self.force_rerender = true;
-                                        }
-                                        Hide => {
-                                            self.pane_state = PaneState::Hidden;
-                                        }
-                                        Reveal => {
-                                            self.pane_state = PaneState::Visible;
+                                        other => {
+                                            let result = match other {
+                                                UserInput(bytes) => self.handle_input(bytes).await,
+                                                PtyOutput(bytes) => {
+                                                    let result = self.handle_pty_output(bytes).await;
+                                                    is_dirty = true;
+                                                    result
+                                                }
+                                                Render => {
+                                                    is_dirty = true;
+                                                    Ok(())
+                                                }
+                                                Rerender => {
+                                                    self.force_rerender = true;
+                                                    Ok(())
+                                                }
+                                                Resize { rect } => {
+                                                    self.handle_resize(rect).await?;
+                                                    self.force_rerender = true;
+                                                    Ok(())
+                                                }
+                                                Hide => {
+                                                    self.pane_state = PaneState::Hidden;
+                                                    Ok(())
+                                                }
+                                                Reveal => {
+                                                    self.pane_state = PaneState::Visible;
+                                                    Ok(())
+                                                }
+                                                PtyDied | Kill => Ok(()),
+                                            };
+
+                                            if let Err(e) = result {
+                                                error!(error=%e, pane_id=self.id, "Pane event handling failed");
+                                            }
                                         }
                                     }
                                 }
@@ -159,6 +180,8 @@ impl Pane {
                         }
                     }
                 }
+
+                Ok(())
             }
             .in_current_span(),
         );
@@ -167,7 +190,7 @@ impl Pane {
     }
 
     async fn handle_input(&mut self, bytes: Bytes) -> Result<()> {
-        self.pty_handle.input(bytes).await.unwrap();
+        self.pty_handle.input(bytes).await?;
         Ok(())
     }
 
@@ -212,7 +235,7 @@ impl Pane {
         let global_x = self.rect.x + 1 + c_col;
         let global_y = self.rect.y + 1 + c_row;
 
-        self.window_handle
+        self.session_handle
             .pane_output(self.id, Bytes::from(output), Some((global_x, global_y)))
             .await
     }

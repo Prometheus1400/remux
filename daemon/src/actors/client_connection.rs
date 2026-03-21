@@ -1,4 +1,5 @@
 use bytes::Bytes;
+use color_eyre::eyre::WrapErr;
 use handle_macro::Handle;
 use remux_core::{
     comm,
@@ -72,10 +73,14 @@ impl ClientConnection {
     fn run(mut self, initial_session_name: &str) -> Result<ClientConnectionHandle> {
         let handle_clone = self.handle.clone();
         let session_name = initial_session_name.to_owned();
+        let client_id = self.id;
         let _task = tokio::spawn(
             async move {
                 let handle = self.handle.clone();
-                self.session_manager_handle.client_connect(self.id, handle.clone(), Some(session_name), true).await?;
+                self.session_manager_handle
+                    .client_connect(self.id, handle.clone(), Some(session_name), true)
+                    .await
+                    .wrap_err("failed to register client with session manager")?;
                 loop {
                     use remux_core::events::CliEvent;
                     tokio::select! {
@@ -90,46 +95,60 @@ impl ClientConnection {
                                     info!(event=?event);
                                 }
                             }
-                            match event {
+                            let should_break = match event {
                                 InitialAttachResult(result) if matches!(self.state, ClientConnectionState::Unattached) => {
                                     match result {
                                         Ok(daemon_state) => {
                                             let res = ResponseBuilder::default().result(ResponseResult::Success(response::Attach{initial_daemon_state: daemon_state})).build();
                                             info!(respnse=?res, "Sending response");
-                                            comm::send_message(&mut self.stream, &res).await.unwrap();
-                                            self.state = ClientConnectionState::Attached;
+                                            if let Err(e) = comm::send_message(&mut self.stream, &res).await {
+                                                warn!(error=%e, client_id=%self.id, "Failed to send initial attach response");
+                                                true
+                                            } else {
+                                                self.state = ClientConnectionState::Attached;
+                                                false
+                                            }
                                         }
                                         Err(e) => {
-                                            comm::send_message(&mut self.stream, &ResponseBuilder::default().result(ResponseResult::Failure::<()>(e.to_string())).build()).await.unwrap();
+                                            let response = ResponseBuilder::default().result(ResponseResult::Failure::<()>(e.to_string())).build();
+                                            if let Err(send_err) = comm::send_message(&mut self.stream, &response).await {
+                                                warn!(error=%send_err, client_id=%self.id, "Failed to send initial attach failure");
+                                                true
+                                            } else {
+                                                false
+                                            }
                                         }
                                     }
                                 }
                                 SuccessAttachToSession(session_id) => {
                                     self.state = ClientConnectionState::Attached;
-                                    comm::send_event(&mut self.stream, DaemonEvent::ActiveSession(session_id)).await.unwrap();
+                                    self.send_daemon_event(DaemonEvent::ActiveSession(session_id)).await.is_err()
                                 }
                                 FailedAttachToSession(..) => {
-                                    comm::send_event(&mut self.stream, DaemonEvent::Disconnected).await.unwrap();
+                                    self.send_daemon_event(DaemonEvent::Disconnected).await.is_err()
                                 }
                                 DetachFromSession(..) => {
                                     self.state = ClientConnectionState::Unattached;
+                                    false
                                 }
                                 Disconnect => {
-                                    comm::send_event(&mut self.stream, DaemonEvent::Disconnected).await.unwrap();
+                                    let _ = self.send_daemon_event(DaemonEvent::Disconnected).await;
+                                    true
                                 }
                                 SessionOutput(bytes) => {
-                                    // comm::send_event(&mut self.stream, DaemonEvent::Raw(bytes)).await.unwrap();
-                                    let chunk_size = 1024;
-                                    for chunk in bytes.chunks(chunk_size) {
-                                        comm::send_event(&mut self.stream, DaemonEvent::Raw(Bytes::copy_from_slice(chunk))).await.unwrap();
-                                    }
+                                    self.send_session_output(bytes).await.is_err()
                                 }
                                 NewSession(session_id, session_name) => {
-                                    comm::send_event(&mut self.stream, DaemonEvent::NewSession(session_id, session_name)).await.unwrap();
+                                    self.send_daemon_event(DaemonEvent::NewSession(session_id, session_name)).await.is_err()
                                 }
                                 _ => {
                                     error!(event=?event, state=?self.state, "Unhandled or invalid event for current state");
+                                    false
                                 }
+                            };
+
+                            if should_break {
+                                break;
                             }
                         },
                         res = comm::recv_cli_event(&mut self.stream), if matches!(self.state, ClientConnectionState::Attached) => {
@@ -145,50 +164,70 @@ impl ClientConnection {
                                             info!(event=?event);
                                         }
                                     }
-                                    match event {
+                                    let result = match event {
                                         CliEvent::Raw(bytes) => {
-                                            self.session_manager_handle.user_input(self.id, bytes).await.unwrap();
+                                            self.session_manager_handle.user_input(self.id, bytes).await
                                         },
                                         CliEvent::TerminalResize{rows, cols} => {
-                                            self.session_manager_handle.terminal_resize(rows, cols).await.unwrap();
+                                            self.session_manager_handle.terminal_resize(rows, cols).await
                                         },
                                         CliEvent::Detach => {
-                                            self.session_manager_handle.client_disconnect(self.id).await.unwrap();
+                                            self.session_manager_handle.client_disconnect(self.id).await
                                         },
                                         CliEvent::KillPane => {
-                                            self.session_manager_handle.user_kill_pane(self.id).await.unwrap();
+                                            self.session_manager_handle.user_kill_pane(self.id).await
                                         },
                                         CliEvent::SplitPaneHorizontal => {
-                                            self.session_manager_handle.user_split_pane(self.id, SplitDirection::Horizontal).await.unwrap();
+                                            self.session_manager_handle.user_split_pane(self.id, SplitDirection::Horizontal).await
                                         },
                                         CliEvent::SplitPaneVertical => {
-                                            self.session_manager_handle.user_split_pane(self.id, SplitDirection::Vertical).await.unwrap();
+                                            self.session_manager_handle.user_split_pane(self.id, SplitDirection::Vertical).await
                                         },
                                         CliEvent::NextPane => {
-                                            self.session_manager_handle.user_iterate_pane(self.id, true).await.unwrap();
+                                            self.session_manager_handle.user_iterate_pane(self.id, true).await
                                         },
                                         CliEvent::PrevPane => {
-                                            self.session_manager_handle.user_iterate_pane(self.id, false).await.unwrap();
+                                            self.session_manager_handle.user_iterate_pane(self.id, false).await
                                         },
                                         CliEvent::SwitchSession(session_name) => {
-                                            self.session_manager_handle.client_switch_session(self.id, session_name).await.unwrap();
+                                            self.session_manager_handle.client_switch_session(self.id, session_name).await
                                         }
+                                    };
+
+                                    if let Err(e) = result {
+                                        error!(error=%e, client_id=%self.id, "Failed to handle client event");
                                     }
                                 }
                                 Err(e) => {
                                     // client disconnected
                                     debug!("Client disconnected because of error recieving cli event: {e}");
-                                    self.session_manager_handle.client_disconnect(self.id).await.unwrap();
+                                    if let Err(disconnect_err) = self.session_manager_handle.client_disconnect(self.id).await {
+                                        warn!(error=%disconnect_err, client_id=%self.id, "Failed to notify session manager about disconnect");
+                                    }
                                     break;
                                 }
                             }
                         }
                     }
                 }
-            Ok::<(), Error>(())
-            }.instrument(error_span!(parent: None, "Client Actor", id=?self.id))
+                Ok::<(), Error>(())
+            }
+            .instrument(error_span!(parent: None, "Client Actor", id=?client_id))
         );
 
         Ok(handle_clone)
+    }
+
+    async fn send_daemon_event(&mut self, event: DaemonEvent) -> Result<()> {
+        comm::send_event(&mut self.stream, event).await.map_err(Into::into)
+    }
+
+    async fn send_session_output(&mut self, bytes: Bytes) -> Result<()> {
+        let chunk_size = 1024;
+        for chunk in bytes.chunks(chunk_size) {
+            self.send_daemon_event(DaemonEvent::Raw(Bytes::copy_from_slice(chunk)))
+                .await?;
+        }
+        Ok(())
     }
 }

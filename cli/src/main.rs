@@ -9,6 +9,7 @@ mod ui;
 use std::fs::File;
 
 use clap::Parser;
+use color_eyre::eyre::WrapErr;
 use ratatui::crossterm::terminal::disable_raw_mode;
 use remux_core::{
     comm,
@@ -29,7 +30,10 @@ use crate::{
 
 #[tokio::main]
 async fn main() {
-    color_eyre::install().unwrap();
+    if let Err(e) = color_eyre::install() {
+        eprintln!("failed to install color_eyre: {e}");
+        std::process::exit(1);
+    }
     let cli = Args::parse();
     match setup_logging() {
         Ok(_guard) => {
@@ -54,7 +58,7 @@ fn setup_logging() -> Result<tracing_appender::non_blocking::WorkerGuard> {
     use tracing_error::ErrorLayer;
     use tracing_subscriber::{EnvFilter, FmtSubscriber, fmt::format::FmtSpan, layer::SubscriberExt};
     // Create the log file
-    let file = File::create("./logs/remux-cli.log")?;
+    let file = File::create("./logs/remux-cli.log").wrap_err("failed to create CLI log file")?;
     let (non_blocking_writer, guard) = non_blocking(file);
 
     // Environment filter
@@ -73,7 +77,7 @@ fn setup_logging() -> Result<tracing_appender::non_blocking::WorkerGuard> {
         .finish()
         .with(ErrorLayer::default());
 
-    tracing::subscriber::set_global_default(subscriber)?;
+    tracing::subscriber::set_global_default(subscriber).wrap_err("failed to install CLI tracing subscriber")?;
 
     Ok(guard)
 }
@@ -82,7 +86,9 @@ fn setup_logging() -> Result<tracing_appender::non_blocking::WorkerGuard> {
 async fn connect() -> Result<UnixStream> {
     let socket_path = get_sock_path()?;
     debug!(path=?socket_path, "Connecting to unix socket");
-    let stream = UnixStream::connect(socket_path.clone()).await?;
+    let stream = UnixStream::connect(socket_path.clone())
+        .await
+        .wrap_err_with(|| format!("failed to connect to unix socket at {}", socket_path.display()))?;
     Ok(stream)
 }
 

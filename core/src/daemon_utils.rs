@@ -44,9 +44,7 @@ pub fn get_sock_path() -> Result<PathBuf> {
         return Ok(path);
     }
 
-    Err(Error::Custom(
-        "Could not determine socket path: neither XDG_RUNTIME_DIR nor HOME are set".to_string(),
-    ))
+    Err(Error::MissingSocketPathEnv)
 }
 
 #[cfg(test)]

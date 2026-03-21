@@ -23,7 +23,10 @@ pub fn start_input_listeners(tx: mpsc::Sender<Input>) -> Vec<CliTask> {
                 match stdin.read(&mut buf).await {
                     Ok(n) if n > 0 => {
                         trace!("read {} bytes from stdin", n);
-                        tx.send(Input::Stdin(Bytes::copy_from_slice(&buf[..n]))).await.unwrap();
+                        if tx.send(Input::Stdin(Bytes::copy_from_slice(&buf[..n]))).await.is_err() {
+                            debug!("stdin listener exiting because input channel closed");
+                            break;
+                        }
                     }
                     Ok(_) => {
                         break;
@@ -39,9 +42,12 @@ pub fn start_input_listeners(tx: mpsc::Sender<Input>) -> Vec<CliTask> {
     });
 
     let task2: CliTask = tokio::spawn(async move {
-        let mut sigwinch = signal(SignalKind::window_change()).unwrap();
+        let mut sigwinch = signal(SignalKind::window_change())?;
         while sigwinch.recv().await.is_some() {
-            tx.send(Input::Resize).await.unwrap();
+            if tx.send(Input::Resize).await.is_err() {
+                debug!("resize listener exiting because input channel closed");
+                break;
+            }
         }
         Ok(())
     });

@@ -7,6 +7,9 @@ pub enum Error {
     #[error("Custom error: {0}")]
     Custom(String),
 
+    #[error("Could not determine socket path: neither XDG_RUNTIME_DIR nor HOME are set")]
+    MissingSocketPathEnv,
+
     #[error("IO error: {0}")]
     IO(#[from] std::io::Error),
 

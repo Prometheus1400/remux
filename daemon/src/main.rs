@@ -5,6 +5,7 @@ mod daemon;
 mod layout;
 mod prelude;
 
+use color_eyre::eyre::WrapErr;
 use daemon::RemuxDaemon;
 
 use crate::prelude::*;
@@ -15,7 +16,10 @@ async fn main() {
         eprintln!("{e}");
         std::process::exit(1);
     }
-    color_eyre::install().unwrap();
+    if let Err(e) = color_eyre::install() {
+        eprintln!("failed to install color_eyre: {e}");
+        std::process::exit(1);
+    }
     if let Err(e) = run().await {
         error!("{e}");
         std::process::exit(1);
@@ -38,7 +42,7 @@ fn setup_logging() -> Result<()> {
         .finish()
         .with(ErrorLayer::default());
 
-    tracing::subscriber::set_global_default(subscriber)?;
+    tracing::subscriber::set_global_default(subscriber).wrap_err("failed to install daemon tracing subscriber")?;
     Ok(())
 }
 

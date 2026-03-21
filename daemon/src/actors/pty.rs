@@ -4,7 +4,7 @@ use std::{
 };
 
 use bytes::Bytes;
-use color_eyre::eyre;
+use color_eyre::eyre::{self, WrapErr};
 use handle_macro::Handle;
 use nix::{
     errno::Errno,
@@ -88,10 +88,13 @@ impl Pty {
                                     match guard.try_io(|fd| unistd::read(fd.get_ref(), &mut buf).map_err(|e| e.into())) {
                                         Ok(Ok(n)) if n > 0 => {
                                             trace!("Pty: read {n} bytes from fd");
-                                            self.pane_handle.pty_output(Bytes::copy_from_slice(&buf[..n])).await.unwrap();
+                                            self.pane_handle
+                                                .pty_output(Bytes::copy_from_slice(&buf[..n]))
+                                                .await
+                                                .wrap_err("failed to send PTY output to pane")?;
                                         },
                                         Ok(Ok(_)) => {
-                                            handler.kill().await.unwrap();
+                                            handler.kill().await.wrap_err("failed to stop PTY after EOF")?;
                                         },
                                         Ok(Err(e)) => {
                                             error!("Error reading: {e}");
@@ -106,7 +109,7 @@ impl Pty {
                                     let _gard = span.enter();
                                     match data_opt {
                                         Some(data) => {
-                                            let mut guard = async_fd.writable().await.unwrap();
+                                            let mut guard = async_fd.writable().await.wrap_err("failed waiting for PTY write readiness")?;
                                             let _res = guard.try_io(|fd| {
                                                 match unistd::write(fd.get_ref(), &data) {
                                                     Ok(n) if n > 0 => trace!("wrote {n} bytes to pty"),
@@ -223,7 +226,13 @@ fn set_fd_nonblocking(owned_fd: &OwnedFd) -> Result<()> {
 }
 
 fn run_child() -> ! {
-    let cmd = CString::new("/bin/zsh").expect("couldn't spawn shell process in PTY");
+    let cmd = match CString::new("/bin/zsh") {
+        Ok(cmd) => cmd,
+        Err(e) => {
+            eprintln!("failed to construct shell command for PTY: {e}");
+            std::process::exit(1);
+        }
+    };
     let _ = execvp(&cmd, std::slice::from_ref(&cmd));
     eprintln!("failed to exec shell");
     std::process::exit(1);

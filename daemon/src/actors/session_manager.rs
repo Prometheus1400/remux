@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use bytes::Bytes;
-use color_eyre::eyre::{self, OptionExt, eyre};
+use color_eyre::eyre::{self, OptionExt, WrapErr, eyre};
 use handle_macro::Handle;
 use itertools::Itertools;
 use remux_core::states::DaemonState;
@@ -221,7 +221,7 @@ impl SessionManager {
     #[instrument(skip(self))]
     fn run(mut self) -> Result<SessionManagerHandle> {
         let handle_clone = self.handle.clone();
-        let _task = tokio::spawn({
+        let _task: DaemonTask = tokio::spawn({
             async move {
                 loop {
                     if let Some(event) = self.rx.recv().await {
@@ -233,7 +233,7 @@ impl SessionManager {
                                 info!(event=?event);
                             }
                         }
-                        match event {
+                        let result = match event {
                             ClientConnect {
                                 client_id,
                                 client_handle,
@@ -247,42 +247,37 @@ impl SessionManager {
                                     create_session,
                                 )
                                 .await
-                                .unwrap();
                             }
-                            ClientDisconnect { client_id } => {
-                                self.handle_client_disconnect(client_id).await.unwrap();
-                            }
+                            ClientDisconnect { client_id } => self.handle_client_disconnect(client_id).await,
                             ClientSwitchSession {
                                 client_id,
                                 session_name,
-                            } => {
-                                self.handle_client_switch_session(client_id, &session_name)
-                                    .await
-                                    .unwrap();
-                            }
+                            } => self.handle_client_switch_session(client_id, &session_name).await,
                             UserInput { client_id, bytes } => {
-                                self.handle_client_send_user_input(client_id, bytes).await.unwrap();
+                                self.handle_client_send_user_input(client_id, bytes).await
                             }
                             UserSplitPane { client_id, direction } => {
-                                self.handle_client_split_pane(client_id, direction).await.unwrap();
+                                self.handle_client_split_pane(client_id, direction).await
                             }
                             UserIteratePane { client_id, is_next } => {
-                                self.handle_client_iterate_pane(client_id, is_next).await.unwrap();
+                                self.handle_client_iterate_pane(client_id, is_next).await
                             }
-                            UserKillPane { client_id } => {
-                                self.handle_client_kill_pane(client_id).await.unwrap();
-                            }
+                            UserKillPane { client_id } => self.handle_client_kill_pane(client_id).await,
                             SessionSendOutput { session_id, bytes } => {
-                                self.handle_session_send_output(session_id, bytes).await.unwrap();
+                                self.handle_session_send_output(session_id, bytes).await
                             }
-                            TerminalResize { rows, cols } => {
-                                for SessionInfo { handle, .. } in self.state.sessions.values_mut() {
-                                    handle.terminal_resize(rows, cols).await.unwrap();
-                                }
-                            }
+                            TerminalResize { rows, cols } => self.handle_terminal_resize(rows, cols).await,
+                        };
+
+                        if let Err(e) = result {
+                            error!(error=%e, "Session manager event handling failed");
                         }
+                    } else {
+                        break;
                     }
                 }
+
+                Ok(())
             }
             .instrument(error_span!(parent: None, "Session Manager"))
         });
@@ -311,7 +306,7 @@ impl SessionManager {
                 let session_info = self
                     .state
                     .get_session_by_name(session_name)
-                    .expect("session should exist here");
+                    .ok_or_else(|| eyre!("session {session_name} should exist after attach"))?;
                 client_handle.initial_attach_result(Ok(self.state.snapshot())).await?;
                 client_handle.success_attach_to_session(session_info.id).await?;
                 session_info.handle.redraw().await?;
@@ -374,7 +369,22 @@ impl SessionManager {
 
     async fn handle_session_send_output(&mut self, session_id: u32, bytes: Bytes) -> Result<()> {
         for client in self.state.get_clients_for_session(&session_id)? {
-            client.session_output(bytes.clone()).await?;
+            if let Err(e) = client.session_output(bytes.clone()).await {
+                warn!(error=%e, session_id, "Failed to send session output to client");
+            }
+        }
+        Ok(())
+    }
+
+    async fn handle_terminal_resize(&mut self, rows: u16, cols: u16) -> Result<()> {
+        for SessionInfo { handle, id, .. } in self.state.sessions.values_mut() {
+            if let Err(e) = handle
+                .terminal_resize(rows, cols)
+                .await
+                .wrap_err_with(|| format!("failed to resize session {id}"))
+            {
+                warn!(error=%e, session_id=*id, "Terminal resize failed for session");
+            }
         }
         Ok(())
     }

@@ -1,7 +1,7 @@
 use std::{fmt::Debug, io::Stdout, time::Duration};
 
 use bytes::Bytes;
-use color_eyre::eyre;
+use color_eyre::eyre::{self, WrapErr};
 use derivative::Derivative;
 use ratatui::{Terminal, prelude::CrosstermBackend, restore, widgets::ListState};
 use remux_core::{
@@ -156,11 +156,15 @@ impl App {
                     match &input {
                         Stdin(bytes) => {
                             trace!(input=?input);
-                            self.dispatch_stdin(bytes.clone()).await.unwrap();
+                            if let Err(e) = self.dispatch_stdin(bytes.clone()).await {
+                                error!(error=%e, "Failed to dispatch stdin");
+                            }
                         }
                         Resize => {
                             info!(input=?input);
-                            self.handle_resize(&mut term).await.unwrap();
+                            if let Err(e) = self.handle_resize(&mut term).await {
+                                error!(error=%e, "Failed to handle terminal resize");
+                            }
                         }
                     }
                 }
@@ -231,7 +235,10 @@ impl App {
     }
 
     async fn handle_stdin_for_selecting_mode(&mut self, bytes: Bytes) -> Result<()> {
-        let event = Event::parse_from(&bytes)?.unwrap();
+        let Some(event) = Event::parse_from(&bytes).wrap_err("failed to parse selector input")? else {
+            trace!(?bytes, "No selector event parsed from bytes");
+            return Ok(());
+        };
 
         let selection_opt = match self.state.ui.selector.selector_type {
             SelectorType::Basic => BasicSelectorWidget::input(event, &mut self.state.ui.selector),
@@ -241,7 +248,12 @@ impl App {
             match selection {
                 ui::traits::Selection::Index(i) => match self.state.mode {
                     AppMode::SelectingSession => {
-                        let session = &self.state.daemon.sessions[i];
+                        let session = self
+                            .state
+                            .daemon
+                            .sessions
+                            .get(i)
+                            .ok_or_else(|| eyre::eyre!("selector chose invalid session index {i}"))?;
                         comm::send_event(&mut self.stream, CliEvent::SwitchSession(session.name.clone())).await?;
                     }
                     AppMode::Normal => {}
