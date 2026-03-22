@@ -13,8 +13,8 @@ use crate::{
     },
     cell::RemuxCell,
     layout::Rect,
-    render::surface::Surface,
     prelude::*,
+    render::surface::Surface,
 };
 
 #[derive(Handle, Debug)]
@@ -233,13 +233,7 @@ impl Pane {
             }
         }
 
-        let surface = Surface::from_parts(
-            self.rect.width,
-            self.rect.height,
-            self.curr_grid.clone(),
-            None,
-            true,
-        );
+        let surface = Surface::from_parts(self.rect.width, self.rect.height, self.curr_grid.clone(), None, true);
         std::mem::swap(&mut self.prev_grid, &mut self.curr_grid);
         self.force_rerender = false;
 

@@ -10,11 +10,17 @@ pub enum Error {
     #[error("Could not determine socket path: neither XDG_RUNTIME_DIR nor HOME are set")]
     MissingSocketPathEnv,
 
+    #[error("Could not determine config path: neither XDG_CONFIG_HOME nor HOME are set")]
+    MissingConfigPathEnv,
+
     #[error("IO error: {0}")]
     IO(#[from] std::io::Error),
 
     #[error("Serialization error: {0}")]
     SerializationError(#[from] serde_json::Error),
+
+    #[error("Frame too large: {size} bytes exceeds max {max} bytes")]
+    FrameTooLarge { size: usize, max: usize },
 
     #[error("Response Error: {0}")]
     Response(ResponseError),

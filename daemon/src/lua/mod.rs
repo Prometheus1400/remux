@@ -1,1 +1,1 @@
-pub mod status_line;
+pub mod config;

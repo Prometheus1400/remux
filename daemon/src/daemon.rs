@@ -1,4 +1,7 @@
-use std::fs::{File, remove_file};
+use std::{
+    fs::{File, remove_file},
+    sync::Arc,
+};
 
 use remux_core::{
     comm,
@@ -11,11 +14,13 @@ use crate::{
         client_connection::ClientConnection,
         session_manager::{SessionManager, SessionManagerHandle},
     },
+    lua::config::ConfigRuntime,
     prelude::*,
 };
 
 pub struct RemuxDaemon {
     _daemon_file: File, // daemon must hold the exclusive file lock while it is alive and running
+    config_runtime: Arc<ConfigRuntime>,
     session_manager_handle: SessionManagerHandle,
 }
 
@@ -23,9 +28,11 @@ impl RemuxDaemon {
     /// Makes sure there can only ever be once instance at the
     /// process level through use of OS level file locks
     pub fn new() -> Result<Self> {
-        let session_manager_handle = SessionManager::spawn()?;
+        let config_runtime = Arc::new(ConfigRuntime::load()?);
+        let session_manager_handle = SessionManager::spawn(config_runtime.clone())?;
         Ok(Self {
             _daemon_file: lock_daemon_file()?,
+            config_runtime,
             session_manager_handle,
         })
     }
@@ -43,15 +50,21 @@ impl RemuxDaemon {
         loop {
             let (stream, _) = listener.accept().await?;
             info!("Accepting connection");
-            if let Err(e) = handle_message(self.session_manager_handle.clone(), stream).await {
+            if let Err(e) =
+                handle_message(self.session_manager_handle.clone(), self.config_runtime.clone(), stream).await
+            {
                 error!("{e}");
             }
         }
     }
 }
 
-#[instrument(skip(session_manager_handle, stream))]
-async fn handle_message(session_manager_handle: SessionManagerHandle, mut stream: UnixStream) -> Result<()> {
+#[instrument(skip(session_manager_handle, config_runtime, stream))]
+async fn handle_message(
+    session_manager_handle: SessionManagerHandle,
+    config_runtime: Arc<ConfigRuntime>,
+    mut stream: UnixStream,
+) -> Result<()> {
     use remux_core::messages::request::{self, DaemonRequestMessage, DaemonRequestMessageBody};
 
     let req: DaemonRequestMessage = comm::read_message(&mut stream).await?;
@@ -69,7 +82,16 @@ async fn handle_message(session_manager_handle: SessionManagerHandle, mut stream
                 create = create,
                 "Creating new client actor"
             );
-            let _client = ClientConnection::spawn(id, stream, session_manager_handle, &session_name, rows, cols)?;
+            let _client = ClientConnection::spawn(
+                req.id,
+                id,
+                stream,
+                session_manager_handle,
+                config_runtime,
+                &session_name,
+                rows,
+                cols,
+            )?;
         }
     };
     Ok(())
@@ -79,24 +101,28 @@ async fn handle_message(session_manager_handle: SessionManagerHandle, mut stream
 mod test {
     #![allow(clippy::unwrap_used)]
 
+    use std::sync::Arc;
+
+    use bytes::Bytes;
     use remux_core::{
         comm,
         events::{CliEvent, DaemonEvent},
-        messages::{
-            RequestBuilder, ResponseMessage, ResponseResult,
-            request,
-            response,
-        },
+        messages::{RequestBuilder, ResponseMessage, ResponseResult, request, response},
     };
     use serial_test::serial;
-    use tokio::time::{Duration, timeout};
-    use tokio::io::AsyncWriteExt;
-    use tokio::net::UnixStream;
+    use tokio::{
+        io::AsyncWriteExt,
+        net::UnixStream,
+        time::{Duration, timeout},
+    };
     use uuid::Uuid;
 
     use super::handle_message;
-    use crate::actors::session_manager::{SessionManager, SessionManagerHandle};
-    use crate::prelude::Result;
+    use crate::{
+        actors::session_manager::{SessionManager, SessionManagerHandle},
+        lua::config::ConfigRuntime,
+        prelude::Result,
+    };
 
     async fn attach_client(
         session_manager_handle: crate::actors::session_manager::SessionManagerHandle,
@@ -113,9 +139,13 @@ mod test {
             })
             .build();
 
-        comm::send_message(&mut client_stream, &request).await.unwrap();
+        comm::send_request(&mut client_stream, &request).await.unwrap();
 
-        let task = tokio::spawn(handle_message(session_manager_handle, daemon_stream));
+        let task = tokio::spawn(handle_message(
+            session_manager_handle,
+            Arc::new(ConfigRuntime::load().unwrap()),
+            daemon_stream,
+        ));
         (task, client_stream)
     }
 
@@ -132,7 +162,10 @@ mod test {
         .map_err(|err| color_eyre::eyre::eyre!(err))?
     }
 
-    async fn recv_daemon_event_with_timeout(stream: &mut UnixStream, duration: Duration) -> Result<Option<DaemonEvent>> {
+    async fn recv_daemon_event_with_timeout(
+        stream: &mut UnixStream,
+        duration: Duration,
+    ) -> Result<Option<DaemonEvent>> {
         match timeout(duration, comm::recv_daemon_event(stream)).await {
             Ok(result) => result.map(Some).map_err(Into::into),
             Err(_) => Ok(None),
@@ -148,7 +181,7 @@ mod test {
     #[tokio::test]
     #[serial]
     async fn handle_message_completes_attach_handshake() -> Result<()> {
-        let session_manager_handle = SessionManager::spawn()?;
+        let session_manager_handle = SessionManager::spawn(Arc::new(ConfigRuntime::load()?))?;
         let (task, mut client_stream) = attach_client(session_manager_handle.clone(), "alpha").await;
 
         let response: ResponseMessage<response::Attach> = comm::read_message(&mut client_stream).await?;
@@ -167,7 +200,7 @@ mod test {
     #[tokio::test]
     #[serial]
     async fn handle_message_routes_detach_to_disconnected_event() -> Result<()> {
-        let session_manager_handle = SessionManager::spawn()?;
+        let session_manager_handle = SessionManager::spawn(Arc::new(ConfigRuntime::load()?))?;
         let (task, mut client_stream) = attach_client(session_manager_handle.clone(), "beta").await;
 
         let _: ResponseMessage<response::Attach> = comm::read_message(&mut client_stream).await?;
@@ -180,8 +213,23 @@ mod test {
 
     #[tokio::test]
     #[serial]
+    async fn handle_message_parses_raw_detach_binding_server_side() -> Result<()> {
+        let session_manager_handle = SessionManager::spawn(Arc::new(ConfigRuntime::load()?))?;
+        let (task, mut client_stream) = attach_client(session_manager_handle.clone(), "bound-detach").await;
+
+        let _: ResponseMessage<response::Attach> = comm::read_message(&mut client_stream).await?;
+        comm::send_event(&mut client_stream, CliEvent::Raw(Bytes::from_static(b"\x02d"))).await?;
+
+        recv_until_disconnected(&mut client_stream).await?;
+        task.await.unwrap()?;
+        shutdown_session_manager(session_manager_handle).await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[serial]
     async fn handle_message_sends_first_render_without_waiting_for_resize_event() -> Result<()> {
-        let session_manager_handle = SessionManager::spawn()?;
+        let session_manager_handle = SessionManager::spawn(Arc::new(ConfigRuntime::load()?))?;
         let (task, mut client_stream) = attach_client(session_manager_handle.clone(), "pre-sized").await;
 
         let _: ResponseMessage<response::Attach> = comm::read_message(&mut client_stream).await?;
@@ -198,7 +246,7 @@ mod test {
     #[tokio::test]
     #[serial]
     async fn handle_message_accepts_resize_without_protocol_failure() -> Result<()> {
-        let session_manager_handle = SessionManager::spawn()?;
+        let session_manager_handle = SessionManager::spawn(Arc::new(ConfigRuntime::load()?))?;
         let (task, mut client_stream) = attach_client(session_manager_handle.clone(), "gamma").await;
 
         let _: ResponseMessage<response::Attach> = comm::read_message(&mut client_stream).await?;
@@ -214,9 +262,13 @@ mod test {
     #[tokio::test]
     #[serial]
     async fn handle_message_rejects_invalid_request_payload() -> Result<()> {
-        let session_manager_handle = SessionManager::spawn()?;
+        let session_manager_handle = SessionManager::spawn(Arc::new(ConfigRuntime::load()?))?;
         let (mut client_stream, daemon_stream) = UnixStream::pair()?;
-        let task = tokio::spawn(handle_message(session_manager_handle.clone(), daemon_stream));
+        let task = tokio::spawn(handle_message(
+            session_manager_handle.clone(),
+            Arc::new(ConfigRuntime::load()?),
+            daemon_stream,
+        ));
 
         client_stream.write_all(&4u32.to_be_bytes()).await?;
         client_stream.write_all(b"nope").await?;

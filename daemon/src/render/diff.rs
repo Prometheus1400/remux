@@ -1,7 +1,7 @@
 use bytes::Bytes;
 
 use crate::{
-    cell::{set_cursor_position, RemuxCell},
+    cell::{RemuxCell, set_cursor_position},
     control_signals::CLEAR,
     layout::Rect,
     render::surface::Surface,

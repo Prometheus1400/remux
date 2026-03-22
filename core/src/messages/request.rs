@@ -16,7 +16,6 @@ pub struct CliRequestMessage<T: RequestBody> {
     pub id: u32,
     pub body: T,
 }
-impl<T: RequestBody + Serialize + for<'de> Deserialize<'de>> Message for CliRequestMessage<T> {}
 
 // --------- deserialized in the daemon ---------  //
 
@@ -26,7 +25,7 @@ pub struct DaemonRequestMessage {
     pub body: DaemonRequestMessageBody,
 }
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
-#[serde(untagged)]
+#[serde(tag = "type", content = "body")]
 pub enum DaemonRequestMessageBody {
     Attach(Attach),
 }
@@ -44,6 +43,10 @@ pub struct Attach {
 }
 impl RequestBody for Attach {
     type ResponseBody = response::Attach;
+
+    fn to_daemon_request_body(&self) -> DaemonRequestMessageBody {
+        DaemonRequestMessageBody::Attach(self.clone())
+    }
 }
 
 // --------- builder ---------  //

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 use bytes::Bytes;
 use color_eyre::eyre::{self, OptionExt, WrapErr, eyre};
@@ -12,8 +12,10 @@ use crate::{
     actors::{
         client_connection::ClientConnectionHandle,
         session::{Session, SessionHandle},
+        window::FocusDirection,
     },
     layout::SplitDirection,
+    lua::config::ConfigRuntime,
     prelude::*,
 };
 
@@ -49,9 +51,9 @@ pub enum SessionManagerEvent {
         client_id: Uuid,
         direction: SplitDirection,
     },
-    UserIteratePane {
+    UserFocusPane {
         client_id: Uuid,
-        is_next: bool,
+        direction: FocusDirection,
     },
     UserKillPane {
         client_id: Uuid,
@@ -87,6 +89,7 @@ struct SessionManagerState {
     session_switcher_state: HashMap<u32, SessionSwitcherState>,
     session_id_count: u32,
     manager_handle: SessionManagerHandle,
+    config_runtime: Arc<ConfigRuntime>,
 }
 
 #[derive(Debug, Clone)]
@@ -96,7 +99,7 @@ struct SessionSwitcherState {
 }
 
 impl SessionManagerState {
-    pub fn new(manager_handle: &SessionManagerHandle) -> Self {
+    pub fn new(manager_handle: &SessionManagerHandle, config_runtime: Arc<ConfigRuntime>) -> Self {
         Self {
             session_name_to_id: Default::default(),
             sessions: Default::default(),
@@ -106,6 +109,7 @@ impl SessionManagerState {
             session_switcher_state: Default::default(),
             session_id_count: Default::default(),
             manager_handle: manager_handle.clone(),
+            config_runtime,
         }
     }
     fn new_session_id(&mut self) -> u32 {
@@ -126,17 +130,16 @@ impl SessionManagerState {
             .ok_or_eyre("client has no session")?;
         self.sessions.get(session_id).ok_or_eyre("no session")
     }
-    pub fn get_clients_for_session(&self, session_id: &u32) -> Result<Vec<&ClientConnectionHandle>> {
-        let client_ids = self
-            .session_to_client_mapping
-            .get(session_id)
-            .ok_or_eyre("error getting clients for session")?;
-        Ok(self
-            .clients
+    pub fn get_clients_for_session(&self, session_id: &u32) -> Vec<&ClientConnectionHandle> {
+        let Some(client_ids) = self.session_to_client_mapping.get(session_id) else {
+            return Vec::new();
+        };
+
+        self.clients
             .iter()
-            .filter(|c| client_ids.contains(c.0))
-            .map(|c| c.1)
-            .collect_vec())
+            .filter(|(client_id, _)| client_ids.contains(client_id))
+            .map(|(_, handle)| handle)
+            .collect_vec()
     }
 
     pub fn create_new_session(&mut self, name: Option<&str>, rows: u16, cols: u16) -> Result<&SessionInfo> {
@@ -145,7 +148,14 @@ impl SessionManagerState {
         } else {
             let id = self.new_session_id();
             let name = name.map(|n| n.to_owned()).unwrap_or(id.to_string());
-            let handle = Session::spawn(id, name.clone(), self.manager_handle.clone(), rows, cols)?;
+            let handle = Session::spawn(
+                id,
+                name.clone(),
+                self.manager_handle.clone(),
+                self.config_runtime.clone(),
+                rows,
+                cols,
+            )?;
             self.session_name_to_id.insert(name.clone(), id);
             self.sessions.insert(id, SessionInfo { handle, name, id });
             self.sessions
@@ -222,18 +232,18 @@ pub struct SessionManager {
     state: SessionManagerState,
 }
 impl SessionManager {
-    pub fn spawn() -> Result<SessionManagerHandle> {
-        let session_manager = SessionManager::new();
+    pub fn spawn(config_runtime: Arc<ConfigRuntime>) -> Result<SessionManagerHandle> {
+        let session_manager = SessionManager::new(config_runtime);
         session_manager.run()
     }
 
-    fn new() -> Self {
+    fn new(config_runtime: Arc<ConfigRuntime>) -> Self {
         let (tx, rx) = mpsc::channel(10);
         let handle = SessionManagerHandle { tx };
         Self {
             handle: handle.clone(),
             rx,
-            state: SessionManagerState::new(&handle),
+            state: SessionManagerState::new(&handle, config_runtime),
         }
     }
 
@@ -285,8 +295,8 @@ impl SessionManager {
                             UserSplitPane { client_id, direction } => {
                                 self.handle_client_split_pane(client_id, direction).await
                             }
-                            UserIteratePane { client_id, is_next } => {
-                                self.handle_client_iterate_pane(client_id, is_next).await
+                            UserFocusPane { client_id, direction } => {
+                                self.handle_client_focus_pane(client_id, direction).await
                             }
                             UserKillPane { client_id } => self.handle_client_kill_pane(client_id).await,
                             SessionSendOutput { session_id, bytes } => {
@@ -330,19 +340,21 @@ impl SessionManager {
         cols: u16,
     ) -> Result<()> {
         let session_name = session_name.ok_or(eyre!("no session name"))?;
-        match self
-            .state
-            .attach_client(client_id, client_handle.clone(), session_name, create_session, rows, cols)
-        {
+        match self.state.attach_client(
+            client_id,
+            client_handle.clone(),
+            session_name,
+            create_session,
+            rows,
+            cols,
+        ) {
             Ok(_) => {
                 let session_info = self
                     .state
                     .get_session_by_name(session_name)
                     .ok_or_else(|| eyre!("session {session_name} should exist after attach"))?;
                 session_info.handle.terminal_resize(rows, cols).await?;
-                client_handle
-                    .initial_attach_result(Ok(()))
-                    .await?;
+                client_handle.initial_attach_result(Ok(())).await?;
                 client_handle.success_attach_to_session(session_info.id).await?;
                 session_info.handle.redraw().await?;
             }
@@ -436,16 +448,22 @@ impl SessionManager {
             .await
     }
 
-    async fn handle_client_iterate_pane(&mut self, client_id: Uuid, is_next: bool) -> Result<()> {
+    async fn handle_client_focus_pane(&mut self, client_id: Uuid, direction: FocusDirection) -> Result<()> {
         self.state
             .get_session_for_client(&client_id)?
             .handle
-            .user_iterate_pane(is_next)
+            .user_focus_pane(direction)
             .await
     }
 
     async fn handle_session_send_output(&mut self, session_id: u32, bytes: Bytes) -> Result<()> {
-        for client in self.state.get_clients_for_session(&session_id)? {
+        let clients = self.state.get_clients_for_session(&session_id);
+        if clients.is_empty() {
+            trace!(session_id, "dropping session output because no clients remain attached");
+            return Ok(());
+        }
+
+        for client in clients {
             if let Err(e) = client.session_output(bytes.clone()).await {
                 warn!(error=%e, session_id, "Failed to send session output to client");
             }
@@ -493,9 +511,7 @@ impl SessionManager {
                 let target = state.sessions.get(state.selected).cloned().unwrap_or_default();
                 OverlayInputResult::Confirm(target)
             }
-            b"\x1b" => {
-                OverlayInputResult::Cancel
-            }
+            b"\x1b" => OverlayInputResult::Cancel,
             _ => OverlayInputResult::Ignore,
         };
 
@@ -532,7 +548,11 @@ impl SessionManager {
 
     async fn handle_shutdown(&mut self) -> Result<()> {
         for SessionInfo { handle, id, .. } in self.state.sessions.values() {
-            if let Err(e) = handle.kill().await.wrap_err_with(|| format!("failed to kill session {id}")) {
+            if let Err(e) = handle
+                .kill()
+                .await
+                .wrap_err_with(|| format!("failed to kill session {id}"))
+            {
                 warn!(error=%e, session_id=*id, "Session shutdown failed");
             }
         }
@@ -542,6 +562,60 @@ impl SessionManager {
         self.state.client_to_session_mapping.clear();
         self.state.clients.clear();
         self.state.session_switcher_state.clear();
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use std::sync::Arc;
+
+    use bytes::Bytes;
+    use tokio::net::UnixStream;
+    use uuid::Uuid;
+
+    use super::SessionManager;
+    use crate::{actors::client_connection::ClientConnection, lua::config::ConfigRuntime, prelude::Result};
+
+    #[tokio::test]
+    async fn get_clients_for_session_returns_empty_when_session_has_no_mapping() -> Result<()> {
+        let config_runtime = Arc::new(ConfigRuntime::load()?);
+        let session_manager = SessionManager::new(config_runtime);
+
+        assert!(session_manager.state.get_clients_for_session(&42).is_empty());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn session_output_after_last_client_disconnect_is_ignored() -> Result<()> {
+        let config_runtime = Arc::new(ConfigRuntime::load()?);
+        let session_manager_handle = SessionManager::spawn(config_runtime.clone())?;
+        let (client_stream, daemon_stream) = UnixStream::pair()?;
+        let client_id = Uuid::new_v4();
+
+        let _client = ClientConnection::spawn(
+            1,
+            client_id,
+            daemon_stream,
+            session_manager_handle.clone(),
+            config_runtime,
+            "disconnect-race",
+            20,
+            60,
+        )?;
+
+        drop(client_stream);
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        session_manager_handle.client_disconnect(client_id).await?;
+        session_manager_handle
+            .session_send_output(0, Bytes::from_static(b"late-output"))
+            .await?;
+
+        session_manager_handle.kill().await?;
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         Ok(())
     }
 }

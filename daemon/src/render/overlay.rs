@@ -6,13 +6,49 @@ pub struct SessionSwitcherOverlay {
     pub selected: usize,
 }
 
-pub fn render_session_switcher_overlay(width: u16, height: u16, overlay: &SessionSwitcherOverlay) -> Surface {
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SessionSwitcherStyle {
+    pub title: String,
+    pub footer: String,
+    pub border_fg: u8,
+    pub background_fg: u8,
+    pub background_bg: u8,
+    pub title_fg: u8,
+    pub text_fg: u8,
+    pub selected_fg: u8,
+    pub selected_bg: u8,
+    pub footer_fg: u8,
+}
+
+impl Default for SessionSwitcherStyle {
+    fn default() -> Self {
+        Self {
+            title: "Sessions".to_owned(),
+            footer: "arrows move  enter select  esc cancel".to_owned(),
+            border_fg: 110,
+            background_fg: 252,
+            background_bg: 236,
+            title_fg: 229,
+            text_fg: 252,
+            selected_fg: 231,
+            selected_bg: 31,
+            footer_fg: 245,
+        }
+    }
+}
+
+pub fn render_session_switcher_overlay(
+    width: u16,
+    height: u16,
+    overlay: &SessionSwitcherOverlay,
+    style: &SessionSwitcherStyle,
+) -> Surface {
     if width < 12 || height < 6 {
         return Surface::new(width, height);
     }
 
-    let title = "Sessions";
-    let footer = "arrows move  enter select  esc cancel";
+    let title = &style.title;
+    let footer = &style.footer;
     let longest_session = overlay
         .sessions
         .iter()
@@ -39,8 +75,8 @@ pub fn render_session_switcher_overlay(width: u16, height: u16, overlay: &Sessio
         popup_width,
         popup_height,
         b' ',
-        vt100::Color::Idx(252),
-        vt100::Color::Idx(236),
+        vt100::Color::Idx(style.background_fg),
+        vt100::Color::Idx(style.background_bg),
     );
     draw_box(
         &mut surface,
@@ -48,24 +84,24 @@ pub fn render_session_switcher_overlay(width: u16, height: u16, overlay: &Sessio
         start_y,
         popup_width,
         popup_height,
-        vt100::Color::Idx(110),
-        vt100::Color::Idx(236),
+        vt100::Color::Idx(style.border_fg),
+        vt100::Color::Idx(style.background_bg),
     );
     write_text(
         &mut surface,
         start_x + 2,
         start_y + 1,
         title,
-        vt100::Color::Idx(229),
-        vt100::Color::Idx(236),
+        vt100::Color::Idx(style.title_fg),
+        vt100::Color::Idx(style.background_bg),
     );
     draw_horizontal_rule(
         &mut surface,
         start_x + 1,
         start_y + 2,
         popup_width.saturating_sub(2),
-        vt100::Color::Idx(110),
-        vt100::Color::Idx(236),
+        vt100::Color::Idx(style.border_fg),
+        vt100::Color::Idx(style.background_bg),
     );
 
     for row_index in 0..list_rows {
@@ -77,12 +113,24 @@ pub fn render_session_switcher_overlay(width: u16, height: u16, overlay: &Sessio
 
         let is_selected = session_index == overlay.selected;
         let (fg, bg) = if is_selected {
-            (vt100::Color::Idx(231), vt100::Color::Idx(31))
+            (
+                vt100::Color::Idx(style.selected_fg),
+                vt100::Color::Idx(style.selected_bg),
+            )
         } else {
-            (vt100::Color::Idx(252), vt100::Color::Idx(236))
+            (vt100::Color::Idx(style.text_fg), vt100::Color::Idx(style.background_bg))
         };
 
-        fill_rect(&mut surface, start_x + 1, row, popup_width.saturating_sub(2), 1, b' ', fg, bg);
+        fill_rect(
+            &mut surface,
+            start_x + 1,
+            row,
+            popup_width.saturating_sub(2),
+            1,
+            b' ',
+            fg,
+            bg,
+        );
 
         let Some(session) = overlay.sessions.get(session_index) else {
             continue;
@@ -91,14 +139,7 @@ pub fn render_session_switcher_overlay(width: u16, height: u16, overlay: &Sessio
         let prefix = if is_selected { "> " } else { "  " };
         let label_width = popup_width.saturating_sub(6) as usize;
         let label = truncate_text(session, label_width);
-        write_text(
-            &mut surface,
-            start_x + 2,
-            row,
-            &(prefix.to_owned() + &label),
-            fg,
-            bg,
-        );
+        write_text(&mut surface, start_x + 2, row, &(prefix.to_owned() + &label), fg, bg);
     }
 
     write_text(
@@ -106,8 +147,8 @@ pub fn render_session_switcher_overlay(width: u16, height: u16, overlay: &Sessio
         start_x + 2,
         start_y + popup_height.saturating_sub(2),
         &truncate_text(footer, popup_width.saturating_sub(4) as usize),
-        vt100::Color::Idx(245),
-        vt100::Color::Idx(236),
+        vt100::Color::Idx(style.footer_fg),
+        vt100::Color::Idx(style.background_bg),
     );
 
     surface

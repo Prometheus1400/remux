@@ -10,7 +10,7 @@ pub struct ResponseMessage<T> {
 impl<T: Serialize + for<'de> Deserialize<'de>> Message for ResponseMessage<T> {}
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
-#[serde(tag = "type")]
+#[serde(tag = "type", content = "body")]
 pub enum ResponseResult<T> {
     Success(T),
     Failure { message: String },
@@ -22,9 +22,6 @@ pub enum ResponseResult<T> {
 pub struct Attach {
     #[serde(default)]
     pub attached: bool,
-
-    #[serde(default)]
-    pub initial_server_snapshot: Option<serde_json::Value>,
 }
 
 // --------- builder ---------  //
@@ -47,6 +44,11 @@ impl Default for ResponseBuilder<ResultUnset> {
 }
 
 impl ResponseBuilder<ResultUnset> {
+    pub fn id(mut self, id: u32) -> Self {
+        self.id = id;
+        self
+    }
+
     pub fn result<T>(self, result: ResponseResult<T>) -> ResponseBuilder<ResultSet<T>> {
         ResponseBuilder { id: self.id, result }
     }

@@ -7,16 +7,17 @@ use tokio::{
 use crate::{
     error::ResponseError,
     events::{CliEvent, DaemonEvent},
-    messages::{CliRequestMessage, Message, RequestBody, ResponseMessage, ResponseResult},
+    messages::{
+        CliRequestMessage, Message, RequestBody, ResponseMessage, ResponseResult,
+        request::DaemonRequestMessage,
+    },
     prelude::*,
 };
 
+const MAX_FRAME_SIZE_BYTES: usize = 4 * 1024 * 1024;
+
 pub async fn send_event<E: Serialize>(stream: &mut UnixStream, event: E) -> Result<()> {
-    let bytes = serde_json::to_vec(&event)?;
-    let num_bytes = bytes.len() as u32;
-    let _written = stream.write(&num_bytes.to_be_bytes()).await?;
-    let _written = stream.write(&bytes).await?;
-    Ok(())
+    write_json_frame(stream, &event).await
 }
 
 pub async fn recv_cli_event(stream: &mut UnixStream) -> Result<CliEvent> {
@@ -28,50 +29,82 @@ pub async fn recv_daemon_event(stream: &mut UnixStream) -> Result<DaemonEvent> {
 }
 
 async fn recv_event<E: DeserializeOwned>(stream: &mut UnixStream) -> Result<E> {
-    let mut num_bytes = [0u8; 4];
-    stream.read_exact(&mut num_bytes).await?;
-    let num_bytes = u32::from_be_bytes(num_bytes);
-
-    let mut message_bytes = vec![0u8; num_bytes as usize];
-    stream.read_exact(&mut message_bytes).await?;
-
-    Ok(serde_json::from_slice(&message_bytes)?)
+    read_json_frame(stream).await
 }
 
 pub async fn send_message(stream: &mut UnixStream, message: &impl Message) -> Result<()> {
-    let bytes = serde_json::to_vec(message)?;
-    let num_bytes = bytes.len() as u32;
+    write_json_frame(stream, message).await
+}
 
-    let _written = stream.write(&num_bytes.to_be_bytes()).await?;
-    let _written = stream.write(&bytes).await?;
-    Ok(())
+pub async fn send_request<B>(stream: &mut UnixStream, request: &CliRequestMessage<B>) -> Result<()>
+where
+    B: RequestBody,
+{
+    let wire_request = DaemonRequestMessage {
+        id: request.id,
+        body: request.body.to_daemon_request_body(),
+    };
+    send_message(stream, &wire_request).await
 }
 
 pub async fn read_message<M: Message>(stream: &mut UnixStream) -> Result<M> {
-    let mut num_bytes = [0u8; 4];
-    stream.read_exact(&mut num_bytes).await?;
-    let num_bytes = u32::from_be_bytes(num_bytes);
-    let mut message_bytes = vec![0u8; num_bytes as usize];
-    stream.read_exact(&mut message_bytes).await?;
-    let res = serde_json::from_slice(&message_bytes)?;
-    Ok(res)
+    read_json_frame(stream).await
 }
 
 pub async fn send_and_recv_message<B>(stream: &mut UnixStream, req: &CliRequestMessage<B>) -> Result<B::ResponseBody>
 where
     B: RequestBody + Serialize + for<'de> Deserialize<'de>,
 {
-    // let req_id = req.id;
-    send_message(stream, req).await?;
+    let req_id = req.id;
+    send_request(stream, req).await?;
     let res: ResponseMessage<B::ResponseBody> = read_message(stream).await?;
-    // let res_id = res.id;
-    // if req_id != res_id {
-    //     return Err(Error::Response(ResponseError::UnexpectedId { expected: req_id, actual: res_id }));
-    // }
+    let res_id = res.id;
+    if req_id != res_id {
+        return Err(Error::Response(ResponseError::UnexpectedId {
+            expected: req_id,
+            actual: res_id,
+        }));
+    }
     match res.result {
         ResponseResult::Success(body) => Ok(body),
         ResponseResult::Failure { message } => Err(Error::Response(ResponseError::Status(message))),
     }
+}
+
+async fn write_json_frame<T: Serialize>(stream: &mut UnixStream, value: &T) -> Result<()> {
+    let bytes = serde_json::to_vec(value)?;
+    write_frame(stream, &bytes).await
+}
+
+async fn read_json_frame<T: DeserializeOwned>(stream: &mut UnixStream) -> Result<T> {
+    let bytes = read_frame(stream).await?;
+    Ok(serde_json::from_slice(&bytes)?)
+}
+
+async fn write_frame(stream: &mut UnixStream, bytes: &[u8]) -> Result<()> {
+    let num_bytes = u32::try_from(bytes.len()).map_err(|_| Error::FrameTooLarge {
+        size: bytes.len(),
+        max: MAX_FRAME_SIZE_BYTES,
+    })?;
+    stream.write_all(&num_bytes.to_be_bytes()).await?;
+    stream.write_all(bytes).await?;
+    Ok(())
+}
+
+async fn read_frame(stream: &mut UnixStream) -> Result<Vec<u8>> {
+    let mut num_bytes = [0u8; 4];
+    stream.read_exact(&mut num_bytes).await?;
+    let size = u32::from_be_bytes(num_bytes) as usize;
+    if size > MAX_FRAME_SIZE_BYTES {
+        return Err(Error::FrameTooLarge {
+            size,
+            max: MAX_FRAME_SIZE_BYTES,
+        });
+    }
+
+    let mut bytes = vec![0u8; size];
+    stream.read_exact(&mut bytes).await?;
+    Ok(bytes)
 }
 
 #[cfg(test)]
@@ -117,11 +150,9 @@ mod test {
             body: DaemonRequestMessageBody::Attach(attach),
         };
 
-        let attach_response = response::Attach {
-            attached: true,
-            initial_server_snapshot: None,
-        };
+        let attach_response = response::Attach { attached: true };
         let res = ResponseBuilder::default()
+            .id(cli_req.id)
             .result(ResponseResult::Success(attach_response.clone()))
             .build();
 
@@ -145,23 +176,12 @@ mod test {
         Ok(())
     }
 
-    #[test]
-    fn attach_response_deserializes_old_and_new_shapes() {
-        let old_json = r#"{"id":1,"result":{"type":"Success","initial_server_snapshot":{"sessions":[],"active_session":null}}}"#;
-        let new_json = r#"{"id":1,"result":{"type":"Success","attached":true}}"#;
-
-        let old: ResponseMessage<response::Attach> = serde_json::from_str(old_json).unwrap();
-        let new: ResponseMessage<response::Attach> = serde_json::from_str(new_json).unwrap();
-
-        assert!(matches!(old.result, ResponseResult::Success(_)));
-        assert!(matches!(new.result, ResponseResult::Success(_)));
-    }
-
     #[tokio::test]
     async fn cli_event_round_trip_over_stream() -> Result<()> {
         let (mut sender, mut receiver) = UnixStream::pair()?;
 
-        let send = tokio::spawn(async move { send_event(&mut sender, CliEvent::TerminalResize { rows: 24, cols: 80 }).await });
+        let send =
+            tokio::spawn(async move { send_event(&mut sender, CliEvent::TerminalResize { rows: 24, cols: 80 }).await });
         let event = recv_cli_event(&mut receiver).await?;
 
         send.await.unwrap()?;
@@ -186,6 +206,36 @@ mod test {
         Ok(())
     }
 
+    #[test]
+    fn daemon_request_message_deserializes_tagged_shape() {
+        let json = r#"{
+            "id": 7,
+            "body": {
+                "type": "Attach",
+                "body": {
+                    "id": "550e8400-e29b-41d4-a716-446655440000",
+                    "session_name": "alpha",
+                    "create": true,
+                    "rows": 24,
+                    "cols": 80
+                }
+            }
+        }"#;
+
+        let request: DaemonRequestMessage = serde_json::from_str(json).unwrap();
+        assert_eq!(request.id, 7);
+        assert!(matches!(
+            request.body,
+            DaemonRequestMessageBody::Attach(request::Attach {
+                session_name,
+                create: true,
+                rows: 24,
+                cols: 80,
+                ..
+            }) if session_name == "alpha"
+        ));
+    }
+
     #[tokio::test]
     async fn send_and_recv_message_returns_response_failure_as_error() -> Result<()> {
         let (mut client, mut server) = UnixStream::pair()?;
@@ -198,6 +248,7 @@ mod test {
         };
         let cli_req = RequestBuilder::default().body(attach).build();
         let response = ResponseBuilder::default()
+            .id(cli_req.id)
             .result(ResponseResult::<response::Attach>::Failure {
                 message: "attach failed".to_owned(),
             })
@@ -215,6 +266,37 @@ mod test {
     }
 
     #[tokio::test]
+    async fn send_and_recv_message_rejects_mismatched_response_id() -> Result<()> {
+        let (mut client, mut server) = UnixStream::pair()?;
+        let attach = request::Attach {
+            id: Uuid::new_v4(),
+            session_name: "session".to_owned(),
+            create: true,
+            rows: 24,
+            cols: 80,
+        };
+        let cli_req = RequestBuilder::default().body(attach).build();
+        let response = ResponseBuilder::default()
+            .id(cli_req.id.wrapping_add(1))
+            .result(ResponseResult::Success(response::Attach { attached: true }))
+            .build();
+
+        let server_task = tokio::spawn(async move {
+            let _: DaemonRequestMessage = read_message(&mut server).await.unwrap();
+            send_message(&mut server, &response).await.unwrap();
+        });
+
+        let err = send_and_recv_message(&mut client, &cli_req).await.unwrap_err();
+        server_task.await.unwrap();
+        assert!(matches!(
+            err,
+            Error::Response(ResponseError::UnexpectedId { expected, actual })
+                if expected == cli_req.id && actual == cli_req.id.wrapping_add(1)
+        ));
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn read_message_fails_for_truncated_payload() -> Result<()> {
         let (mut writer, mut reader) = UnixStream::pair()?;
 
@@ -223,7 +305,9 @@ mod test {
             writer.write_all(b"{}").await.unwrap();
         });
 
-        let err = read_message::<ResponseMessage<response::Attach>>(&mut reader).await.unwrap_err();
+        let err = read_message::<ResponseMessage<response::Attach>>(&mut reader)
+            .await
+            .unwrap_err();
         writer_task.await.unwrap();
         assert!(matches!(err, Error::IO(_)));
         Ok(())
@@ -241,6 +325,48 @@ mod test {
         let err = recv_cli_event(&mut reader).await.unwrap_err();
         writer_task.await.unwrap();
         assert!(matches!(err, Error::SerializationError(_)));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn read_message_rejects_oversized_frame() -> Result<()> {
+        let (mut writer, mut reader) = UnixStream::pair()?;
+
+        let writer_task = tokio::spawn(async move {
+            writer
+                .write_all(&((MAX_FRAME_SIZE_BYTES as u32) + 1).to_be_bytes())
+                .await
+                .unwrap();
+        });
+
+        let err = read_message::<ResponseMessage<response::Attach>>(&mut reader)
+            .await
+            .unwrap_err();
+        writer_task.await.unwrap();
+        assert!(matches!(
+            err,
+            Error::FrameTooLarge { size, max } if size == MAX_FRAME_SIZE_BYTES + 1 && max == MAX_FRAME_SIZE_BYTES
+        ));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn recv_event_rejects_oversized_frame() -> Result<()> {
+        let (mut writer, mut reader) = UnixStream::pair()?;
+
+        let writer_task = tokio::spawn(async move {
+            writer
+                .write_all(&((MAX_FRAME_SIZE_BYTES as u32) + 1).to_be_bytes())
+                .await
+                .unwrap();
+        });
+
+        let err = recv_cli_event(&mut reader).await.unwrap_err();
+        writer_task.await.unwrap();
+        assert!(matches!(
+            err,
+            Error::FrameTooLarge { size, max } if size == MAX_FRAME_SIZE_BYTES + 1 && max == MAX_FRAME_SIZE_BYTES
+        ));
         Ok(())
     }
 }

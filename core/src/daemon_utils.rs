@@ -7,7 +7,7 @@ use std::{
 use fs2::FileExt;
 
 use crate::{
-    constants::{self, HOME_DIR, RUNTIME_DIR},
+    constants::{self, CONFIG_DIR, HOME_DIR, RUNTIME_DIR},
     error::{Error, Result},
 };
 
@@ -48,6 +48,18 @@ pub fn get_sock_path() -> Result<PathBuf> {
     }
 
     Err(Error::MissingSocketPathEnv)
+}
+
+pub fn get_config_path() -> Result<PathBuf> {
+    if let Ok(config_dir) = var(CONFIG_DIR) {
+        return Ok(PathBuf::from(config_dir).join("remux/init.lua"));
+    }
+
+    if let Ok(home_dir) = var(HOME_DIR) {
+        return Ok(PathBuf::from(home_dir).join(".config/remux/init.lua"));
+    }
+
+    Err(Error::MissingConfigPathEnv)
 }
 
 #[cfg(test)]
@@ -159,6 +171,47 @@ mod test {
             std::env::remove_var(HOME_DIR);
         }
         fs::remove_dir_all(home_dir)?;
+        Ok(())
+    }
+
+    #[test]
+    fn get_config_path_prefers_xdg_config_home_when_present() -> Result<()> {
+        let _lock = TEST_MUTEX.lock();
+        let config_dir = temp_home_path("xdg-config-home");
+
+        unsafe {
+            std::env::set_var(CONFIG_DIR, &config_dir);
+            std::env::set_var(HOME_DIR, temp_home_path("home-ignored"));
+        }
+
+        let path = get_config_path()?;
+
+        assert_eq!(path, config_dir.join("remux/init.lua"));
+
+        unsafe {
+            std::env::remove_var(CONFIG_DIR);
+            std::env::remove_var(HOME_DIR);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn get_config_path_falls_back_to_home_dot_config() -> Result<()> {
+        let _lock = TEST_MUTEX.lock();
+        let home_dir = temp_home_path("config-home");
+
+        unsafe {
+            std::env::remove_var(CONFIG_DIR);
+            std::env::set_var(HOME_DIR, &home_dir);
+        }
+
+        let path = get_config_path()?;
+
+        assert_eq!(path, home_dir.join(".config/remux/init.lua"));
+
+        unsafe {
+            std::env::remove_var(HOME_DIR);
+        }
         Ok(())
     }
 }

@@ -14,14 +14,12 @@ use tokio::{net::UnixStream, sync::mpsc};
 use uuid::Uuid;
 
 use crate::{
-    input_parser::{self, InputParser},
     prelude::*,
     tasks::input::{self, Input},
 };
 
 pub struct App {
     _id: Uuid,
-    input_parser: InputParser,
     stream: UnixStream,
     bg_tasks: Vec<CliTask>,
     terminal_size: (u16, u16),
@@ -31,7 +29,6 @@ impl App {
     pub fn new(id: Uuid, stream: UnixStream) -> Self {
         Self {
             _id: id,
-            input_parser: InputParser::default(),
             stream,
             bg_tasks: Vec::new(),
             terminal_size: (0, 0),
@@ -82,15 +79,9 @@ impl App {
     }
 
     async fn dispatch_stdin(&mut self, bytes: Bytes) -> Result<()> {
-        for parsed_event in self.input_parser.process(&bytes) {
-            match parsed_event {
-                input_parser::ParsedEvent::DaemonAction(cli_event) => {
-                    comm::send_event(&mut self.stream, cli_event).await?;
-                }
-            }
-        }
-
-        Ok(())
+        comm::send_event(&mut self.stream, CliEvent::Raw(bytes))
+            .await
+            .map_err(Into::into)
     }
     fn enter_terminal(&self) -> Result<()> {
         enable_raw_mode()?;

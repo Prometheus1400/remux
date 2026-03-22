@@ -1,15 +1,25 @@
+use std::sync::Arc;
+
 use bytes::Bytes;
 use color_eyre::eyre::WrapErr;
 use handle_macro::Handle;
 use remux_core::{
     comm,
-    events::DaemonEvent,
+    config::BuiltinAction,
+    events::{CliEvent, DaemonEvent},
     messages::{ResponseBuilder, ResponseResult, response},
 };
 use tokio::{net::UnixStream, sync::mpsc};
 use uuid::Uuid;
 
-use crate::{actors::session_manager::SessionManagerHandle, layout::SplitDirection, prelude::*};
+use crate::{
+    actors::session_manager::SessionManagerHandle,
+    input_parser::{InputParser, ParsedInput},
+    layout::SplitDirection,
+    actors::window::FocusDirection,
+    lua::config::ConfigRuntime,
+    prelude::*,
+};
 
 #[allow(unused)]
 #[derive(Handle, Debug)]
@@ -38,34 +48,48 @@ enum ClientConnectionState {
 
 pub struct ClientConnection {
     id: Uuid,
+    request_id: u32,
     stream: UnixStream,
     handle: ClientConnectionHandle,
     rx: mpsc::Receiver<ClientConnectionEvent>,
     session_manager_handle: SessionManagerHandle,
+    config_runtime: Arc<ConfigRuntime>,
+    input_parser: InputParser,
     state: ClientConnectionState,
 }
 impl ClientConnection {
     pub fn spawn(
+        request_id: u32,
         id: Uuid,
         stream: UnixStream,
         session_manager_handle: SessionManagerHandle,
+        config_runtime: Arc<ConfigRuntime>,
         initial_session_name: &str,
         rows: u16,
         cols: u16,
     ) -> Result<ClientConnectionHandle> {
-        let client = Self::new(id, stream, session_manager_handle);
+        let client = Self::new(request_id, id, stream, session_manager_handle, config_runtime);
         client.run(initial_session_name, rows, cols)
     }
-    fn new(id: Uuid, stream: UnixStream, session_manager_handle: SessionManagerHandle) -> Self {
+    fn new(
+        request_id: u32,
+        id: Uuid,
+        stream: UnixStream,
+        session_manager_handle: SessionManagerHandle,
+        config_runtime: Arc<ConfigRuntime>,
+    ) -> Self {
         let (tx, rx) = mpsc::channel(10);
         let handle = ClientConnectionHandle { tx };
 
         Self {
             id,
+            request_id,
             stream,
             handle,
             rx,
             session_manager_handle,
+            input_parser: InputParser::new(config_runtime.key_bindings()),
+            config_runtime,
             state: ClientConnectionState::Unattached,
         }
     }
@@ -81,7 +105,6 @@ impl ClientConnection {
                     .await
                     .wrap_err("failed to register client with session manager")?;
                 loop {
-                    use remux_core::events::CliEvent;
                     tokio::select! {
                         Some(event) = self.rx.recv() => {
                             let span = error_span!("Recieved Client Connection Event");
@@ -99,7 +122,12 @@ impl ClientConnection {
                                     match result {
                                         Ok(server_snapshot) => {
                                             let _ = server_snapshot;
-                                            let res = ResponseBuilder::default().result(ResponseResult::Success(response::Attach{attached: true, initial_server_snapshot: None})).build();
+                                            let res = ResponseBuilder::default()
+                                                .id(self.request_id)
+                                                .result(ResponseResult::Success(response::Attach {
+                                                    attached: true,
+                                                }))
+                                                .build();
                                             info!(respnse=?res, "Sending response");
                                             if let Err(e) = comm::send_message(&mut self.stream, &res).await {
                                                 warn!(error=%e, client_id=%self.id, "Failed to send initial attach response");
@@ -111,6 +139,7 @@ impl ClientConnection {
                                         }
                                         Err(e) => {
                                             let response = ResponseBuilder::default()
+                                                .id(self.request_id)
                                                 .result(ResponseResult::Failure::<()> {
                                                     message: e.to_string(),
                                                 })
@@ -167,9 +196,7 @@ impl ClientConnection {
                                         }
                                     }
                                     let result = match event {
-                                        CliEvent::Raw(bytes) => {
-                                            self.session_manager_handle.user_input(self.id, bytes).await
-                                        },
+                                        CliEvent::Raw(bytes) => self.handle_stdin(bytes).await,
                                         CliEvent::TerminalResize{rows, cols} => {
                                             self.session_manager_handle.terminal_resize(rows, cols).await
                                         },
@@ -177,24 +204,6 @@ impl ClientConnection {
                                             self.detach_and_exit().await?;
                                             break;
                                         },
-                                        CliEvent::KillPane => {
-                                            self.session_manager_handle.user_kill_pane(self.id).await
-                                        },
-                                        CliEvent::SplitPaneHorizontal => {
-                                            self.session_manager_handle.user_split_pane(self.id, SplitDirection::Horizontal).await
-                                        },
-                                        CliEvent::SplitPaneVertical => {
-                                            self.session_manager_handle.user_split_pane(self.id, SplitDirection::Vertical).await
-                                        },
-                                        CliEvent::NextPane => {
-                                            self.session_manager_handle.user_iterate_pane(self.id, true).await
-                                        },
-                                        CliEvent::PrevPane => {
-                                            self.session_manager_handle.user_iterate_pane(self.id, false).await
-                                        },
-                                        CliEvent::OpenSessionSwitcher => {
-                                            self.session_manager_handle.client_open_session_switcher(self.id).await
-                                        }
                                     };
 
                                     if let Err(e) = result {
@@ -247,5 +256,54 @@ impl ClientConnection {
                 warn!(error=%disconnect_err, client_id=%client_id, "Failed to notify session manager about disconnect");
             }
         });
+    }
+
+    async fn handle_stdin(&mut self, bytes: Bytes) -> Result<()> {
+        for input in self.input_parser.process(&bytes) {
+            match input {
+                ParsedInput::Raw(bytes) => {
+                    self.session_manager_handle.user_input(self.id, bytes).await?;
+                }
+                ParsedInput::Builtin(action) => {
+                    self.execute_builtin_action(action).await?;
+                }
+                ParsedInput::Named(name) => {
+                    self.invoke_named_action(&name).await?;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn invoke_named_action(&self, name: &str) -> Result<()> {
+        for action in self.config_runtime.invoke_named_action(name)? {
+            self.execute_builtin_action(action).await?;
+        }
+        Ok(())
+    }
+
+    async fn execute_builtin_action(&self, action: BuiltinAction) -> Result<()> {
+        match action {
+            BuiltinAction::SplitPaneVertical => {
+                self.session_manager_handle
+                    .user_split_pane(self.id, SplitDirection::Vertical)
+                    .await
+            }
+            BuiltinAction::SplitPaneHorizontal => {
+                self.session_manager_handle
+                    .user_split_pane(self.id, SplitDirection::Horizontal)
+                    .await
+            }
+            BuiltinAction::FocusPaneLeft => self.session_manager_handle.user_focus_pane(self.id, FocusDirection::Left).await,
+            BuiltinAction::FocusPaneDown => self.session_manager_handle.user_focus_pane(self.id, FocusDirection::Down).await,
+            BuiltinAction::FocusPaneUp => self.session_manager_handle.user_focus_pane(self.id, FocusDirection::Up).await,
+            BuiltinAction::FocusPaneRight => self.session_manager_handle.user_focus_pane(self.id, FocusDirection::Right).await,
+            BuiltinAction::KillPane => self.session_manager_handle.user_kill_pane(self.id).await,
+            BuiltinAction::Detach => self.session_manager_handle.client_disconnect(self.id).await,
+            BuiltinAction::OpenSessionSwitcher => {
+                self.session_manager_handle.client_open_session_switcher(self.id).await
+            }
+        }
     }
 }

@@ -4,18 +4,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Serialize, Deserialize)]
 pub enum CliEvent {
     Raw(Bytes), // raw user keypresses
-
-    // pane related
-    KillPane,
-    NextPane,
-    SplitPaneVertical,
-    SplitPaneHorizontal,
-    PrevPane,
-
-    OpenSessionSwitcher,
-
     TerminalResize { rows: u16, cols: u16 },
-
     Detach,
 }
 

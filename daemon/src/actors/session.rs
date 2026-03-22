@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, sync::Arc};
 
 use bytes::Bytes;
 use color_eyre::eyre::WrapErr;
@@ -10,16 +10,16 @@ use crate::{
     actors::{
         pane::{Pane, PaneHandle},
         session_manager::SessionManagerHandle,
-        window::{Window, WindowAction},
+        window::{FocusDirection, Window, WindowAction},
     },
     layout::{Rect, SplitDirection},
-    lua::status_line::StatusLineRuntime,
+    lua::config::ConfigRuntime,
+    prelude::*,
     render::{
         diff::render_surface_diff,
         overlay::{SessionSwitcherOverlay, render_session_switcher_overlay},
         surface::Surface,
     },
-    prelude::*,
 };
 
 #[allow(unused)]
@@ -30,8 +30,8 @@ pub enum SessionEvent {
     UserSplitPane {
         direction: SplitDirection,
     },
-    UserIteratePane {
-        is_next: bool,
+    UserFocusPane {
+        direction: FocusDirection,
     },
     UserKillPane,
     Redraw,
@@ -72,29 +72,36 @@ pub struct Session {
     pane_handles: BTreeMap<usize, PaneHandle>,
     pane_surfaces: BTreeMap<usize, Surface>,
     prev_surface: Surface,
-    status_line: StatusLineRuntime,
+    config_runtime: Arc<ConfigRuntime>,
     session_switcher: Option<SessionSwitcherOverlay>,
     startup_actions: Vec<WindowAction>,
 }
 
 impl Session {
-    #[instrument(parent=None, skip(session_manager_handle), name="Session")]
+    #[instrument(parent=None, skip(session_manager_handle, config_runtime), name="Session")]
     pub fn spawn(
         id: u32,
         name: String,
         session_manager_handle: SessionManagerHandle,
+        config_runtime: Arc<ConfigRuntime>,
         rows: u16,
         cols: u16,
     ) -> Result<SessionHandle> {
-        let session = Session::new(id, name, session_manager_handle, rows, cols)?;
+        let session = Session::new(id, name, session_manager_handle, config_runtime, rows, cols)?;
         session.run()
     }
 
-    fn new(id: u32, name: String, session_manager_handle: SessionManagerHandle, rows: u16, cols: u16) -> Result<Self> {
+    fn new(
+        id: u32,
+        name: String,
+        session_manager_handle: SessionManagerHandle,
+        config_runtime: Arc<ConfigRuntime>,
+        rows: u16,
+        cols: u16,
+    ) -> Result<Self> {
         let (tx, rx) = mpsc::channel(10);
         let handle = SessionHandle { tx };
-        let status_line = StatusLineRuntime::load_default()?;
-        let (window, startup_actions) = Window::new(status_line.enabled()?, rows, cols)?;
+        let (window, startup_actions) = Window::new(config_runtime.status_bar_enabled()?, rows, cols)?;
 
         Ok(Self {
             id,
@@ -106,7 +113,7 @@ impl Session {
             pane_handles: BTreeMap::new(),
             pane_surfaces: BTreeMap::new(),
             prev_surface: Surface::new(cols, rows),
-            status_line,
+            config_runtime,
             session_switcher: None,
             startup_actions,
         })
@@ -122,7 +129,7 @@ impl Session {
                     .wrap_err("failed to execute session startup actions")?;
                 self.compose_and_send(true).await?;
 
-                let status_line_enabled = self.status_line.enabled()?;
+                let status_line_enabled = self.config_runtime.status_bar_enabled()?;
                 let mut status_line_tick = tokio::time::interval(STATUS_LINE_REFRESH_INTERVAL);
                 status_line_tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
                 status_line_tick.tick().await;
@@ -160,7 +167,7 @@ impl Session {
                                             UserInput(bytes) => self.handle_user_input(bytes).await,
                                             UserConnection => self.handle_new_connection().await,
                                             UserSplitPane { direction } => self.handle_split_pane(direction).await,
-                                            UserIteratePane { is_next } => self.handle_iterate_pane(is_next).await,
+                                            UserFocusPane { direction } => self.handle_focus_pane(direction).await,
                                             UserKillPane => self.handle_kill_pane().await,
                                             Redraw => {
                                                 let actions = self.window.redraw()?;
@@ -213,8 +220,8 @@ impl Session {
         self.compose_and_send(true).await
     }
 
-    async fn handle_iterate_pane(&mut self, is_next: bool) -> Result<()> {
-        let actions = self.window.iterate_active_pane(is_next)?;
+    async fn handle_focus_pane(&mut self, direction: FocusDirection) -> Result<()> {
+        let actions = self.window.focus_pane(direction)?;
         self.execute_window_actions(actions).await?;
         self.compose_and_send(true).await
     }
@@ -306,15 +313,22 @@ impl Session {
     }
 
     async fn compose_and_send(&mut self, force: bool) -> Result<()> {
-        let status_line_surface = self.status_line.render(self.prev_surface.width(), Some(&self.name))?;
-        let status_line = if self.status_line.enabled()? {
+        let status_line_surface = self
+            .config_runtime
+            .render_status_bar(self.prev_surface.width(), Some(&self.name))?;
+        let status_line = if self.config_runtime.status_bar_enabled()? {
             Some(&status_line_surface)
         } else {
             None
         };
         let mut surface = self.window.compose_surface(&self.pane_surfaces, status_line)?;
         if let Some(overlay) = &self.session_switcher {
-            let overlay_surface = render_session_switcher_overlay(surface.width(), surface.height(), overlay);
+            let overlay_surface = render_session_switcher_overlay(
+                surface.width(),
+                surface.height(),
+                overlay,
+                &self.config_runtime.session_switcher_style()?,
+            );
             surface.overlay_transparent_at(&overlay_surface, 0, 0);
         }
         let output = render_surface_diff(&self.prev_surface, &surface, force);

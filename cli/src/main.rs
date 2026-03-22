@@ -1,6 +1,5 @@
 mod app;
 mod args;
-mod input_parser;
 mod prelude;
 mod tasks;
 
@@ -90,12 +89,13 @@ fn setup_logging_at(log_path: &Path) -> Result<tracing_appender::non_blocking::W
 
 #[cfg(test)]
 mod tests {
-    use super::setup_logging_at;
     use std::{
         fs,
         path::PathBuf,
         time::{SystemTime, UNIX_EPOCH},
     };
+
+    use super::setup_logging_at;
 
     fn unique_log_path() -> PathBuf {
         let nonce = SystemTime::now()

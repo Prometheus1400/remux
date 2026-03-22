@@ -1,7 +1,7 @@
 use crate::render::{
+    bar::{BarRenderer, BarSpec, BarStyle},
     diff::render_surface_diff,
-    overlay::{render_session_switcher_overlay, SessionSwitcherOverlay},
-    status_line::{StatusLineRenderer, StatusLineTemplate},
+    overlay::{SessionSwitcherOverlay, SessionSwitcherStyle, render_session_switcher_overlay},
     surface::Surface,
 };
 
@@ -60,7 +60,11 @@ fn final_surface_diff_clears_removed_overlay_content() {
 
     let output = render_surface_diff(&prev, &curr, false);
 
-    assert!(output.windows(4).any(|window| window == b"\x1b[0m"), "output was {:?}", output);
+    assert!(
+        output.windows(4).any(|window| window == b"\x1b[0m"),
+        "output was {:?}",
+        output
+    );
     assert!(
         output.windows(3).any(|window| window == b"[1X"),
         "output was {:?}",
@@ -85,19 +89,24 @@ fn final_surface_diff_hides_cursor_when_surface_cursor_is_not_visible() {
 
     let output = render_surface_diff(&prev, &curr, false);
 
-    assert!(output.windows(6).any(|window| window == b"\x1b[?25l"), "output was {:?}", output);
+    assert!(
+        output.windows(6).any(|window| window == b"\x1b[?25l"),
+        "output was {:?}",
+        output
+    );
 }
 
 #[test]
-fn status_line_renderer_places_sections_across_the_row() {
-    let renderer = StatusLineRenderer::from_template(StatusLineTemplate {
+fn bar_renderer_places_sections_across_the_row() {
+    let renderer = BarRenderer::from_spec(BarSpec {
         enabled: true,
-        a: vec!["left".into()],
-        b: vec!["middle".into()],
-        c: vec!["right".into()],
+        left: vec!["left".into()],
+        center: vec!["middle".into()],
+        right: vec!["right".into()],
+        style: BarStyle::default(),
     });
 
-    let surface = renderer.render(30, Some("demo-session"));
+    let surface = renderer.render(30);
     let rendered: String = (0..30).map(|x| surface.byte_at(x, 0).unwrap_or(b' ') as char).collect();
 
     assert!(rendered.starts_with("left"));
@@ -106,19 +115,22 @@ fn status_line_renderer_places_sections_across_the_row() {
 }
 
 #[test]
-fn disabled_status_line_renders_nothing() {
-    let renderer = StatusLineRenderer::from_template(StatusLineTemplate {
+fn disabled_bar_renders_nothing() {
+    let renderer = BarRenderer::from_spec(BarSpec {
         enabled: false,
-        a: vec!["active-session".into()],
-        b: Vec::new(),
-        c: Vec::new(),
+        left: vec!["active-session".into()],
+        center: Vec::new(),
+        right: Vec::new(),
+        style: BarStyle::default(),
     });
 
-    assert!(renderer
-        .render(20, Some("demo-session"))
-        .cells()
-        .iter()
-        .all(|cell: &crate::cell::RemuxCell| cell.content_bytes() == b" "));
+    assert!(
+        renderer
+            .render(20)
+            .cells()
+            .iter()
+            .all(|cell: &crate::cell::RemuxCell| cell.content_bytes() == b" ")
+    );
 }
 
 #[test]
@@ -128,7 +140,7 @@ fn session_switcher_overlay_renders_selected_session() {
         selected: 1,
     };
 
-    let surface = render_session_switcher_overlay(40, 12, &overlay);
+    let surface = render_session_switcher_overlay(40, 12, &overlay, &SessionSwitcherStyle::default());
     let rendered: String = surface
         .cells()
         .iter()
@@ -177,6 +189,7 @@ fn transparent_overlay_preserves_background_outside_painted_cells() {
             sessions: vec!["alpha".into()],
             selected: 0,
         },
+        &SessionSwitcherStyle::default(),
     );
 
     base.overlay_transparent_at(&overlay, 0, 0);
@@ -186,45 +199,48 @@ fn transparent_overlay_preserves_background_outside_painted_cells() {
 }
 
 #[test]
-fn status_line_truncates_text_that_overflows_surface_width() {
-    let renderer = StatusLineRenderer::from_template(StatusLineTemplate {
+fn bar_truncates_text_that_overflows_surface_width() {
+    let renderer = BarRenderer::from_spec(BarSpec {
         enabled: true,
-        a: vec!["abcdef".into()],
-        b: Vec::new(),
-        c: vec!["uvwxyz".into()],
+        left: vec!["abcdef".into()],
+        center: Vec::new(),
+        right: vec!["uvwxyz".into()],
+        style: BarStyle::default(),
     });
 
-    let surface = renderer.render(5, None);
+    let surface = renderer.render(5);
     let rendered: String = (0..5).map(|x| surface.byte_at(x, 0).unwrap_or(b' ') as char).collect();
 
     assert_eq!(rendered, "...  ");
 }
 
 #[test]
-fn status_line_prioritizes_left_section_when_space_is_tight() {
-    let renderer = StatusLineRenderer::from_template(StatusLineTemplate {
+fn bar_prioritizes_left_section_when_space_is_tight() {
+    let renderer = BarRenderer::from_spec(BarSpec {
         enabled: true,
-        a: vec!["left".into()],
-        b: vec!["center-center".into()],
-        c: vec!["right-right".into()],
+        left: vec!["left".into()],
+        center: vec!["center-center".into()],
+        right: vec!["right-right".into()],
+        style: BarStyle::default(),
     });
 
-    let surface = renderer.render(14, None);
+    let surface = renderer.render(14);
     let rendered: String = (0..14).map(|x| surface.byte_at(x, 0).unwrap_or(b' ') as char).collect();
 
     assert!(rendered.starts_with("left"));
 }
 
 #[test]
-fn status_line_hides_center_section_when_it_would_float_awkwardly() {
-    let renderer = StatusLineRenderer::from_template(StatusLineTemplate {
+fn bar_hides_center_section_when_it_would_float_awkwardly() {
+    let renderer = BarRenderer::from_spec(BarSpec {
         enabled: true,
-        a: vec!["left".into()],
-        b: vec!["12:34:56".into()],
-        c: vec!["right".into()],
+        left: vec!["left".into()],
+        center: vec!["12:34:56".into()],
+        right: vec!["right".into()],
+        style: BarStyle::default(),
     });
 
-    let surface = renderer.render(18, None);
+    let surface = renderer.render(18);
     let rendered: String = (0..18).map(|x| surface.byte_at(x, 0).unwrap_or(b' ') as char).collect();
 
     assert!(rendered.starts_with("left"));
@@ -236,7 +252,7 @@ fn status_line_hides_center_section_when_it_would_float_awkwardly() {
 fn session_switcher_overlay_handles_empty_session_list() {
     let overlay = SessionSwitcherOverlay::default();
 
-    let surface = render_session_switcher_overlay(20, 6, &overlay);
+    let surface = render_session_switcher_overlay(20, 6, &overlay, &SessionSwitcherStyle::default());
     let rendered: String = surface
         .cells()
         .iter()
@@ -254,7 +270,7 @@ fn session_switcher_overlay_truncates_long_session_names() {
         selected: 0,
     };
 
-    let surface = render_session_switcher_overlay(24, 10, &overlay);
+    let surface = render_session_switcher_overlay(24, 10, &overlay, &SessionSwitcherStyle::default());
     let rendered: String = surface
         .cells()
         .iter()

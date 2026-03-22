@@ -9,6 +9,14 @@ use crate::{
     render::surface::Surface,
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FocusDirection {
+    Left,
+    Down,
+    Up,
+    Right,
+}
+
 #[derive(Debug, Clone)]
 pub enum WindowAction {
     SendOutput(Bytes),
@@ -100,22 +108,26 @@ impl Window {
         Ok(actions)
     }
 
-    pub fn iterate_active_pane(&mut self, is_next: bool) -> Result<Vec<WindowAction>> {
-        let ids: Vec<usize> = self.layout_sizing_map.keys().copied().collect();
-        if ids.is_empty() {
+    pub fn focus_pane(&mut self, direction: FocusDirection) -> Result<Vec<WindowAction>> {
+        let Some(current) = self.layout_sizing_map.get(&self.active_pane_id).copied() else {
             return Ok(Vec::new());
-        }
-
-        let current_idx = ids.iter().position(|&id| id == self.active_pane_id).unwrap_or(0);
-        let new_idx = if is_next {
-            (current_idx + 1) % ids.len()
-        } else if current_idx == 0 {
-            ids.len() - 1
-        } else {
-            current_idx - 1
         };
 
-        self.active_pane_id = ids[new_idx];
+        let next = self
+            .layout_sizing_map
+            .iter()
+            .filter_map(|(&id, &rect)| {
+                if id == self.active_pane_id {
+                    return None;
+                }
+                focus_candidate(direction, current, id, rect)
+            })
+            .min_by_key(|candidate| candidate.sort_key());
+
+        if let Some(candidate) = next {
+            self.active_pane_id = candidate.id;
+        }
+
         Ok(Vec::new())
     }
 
@@ -313,5 +325,163 @@ fn content_rect(root_rect: Rect, status_line_enabled: bool) -> Rect {
         }
     } else {
         root_rect
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct FocusCandidate {
+    id: usize,
+    gap: u16,
+    overlap: u16,
+}
+
+impl FocusCandidate {
+    fn sort_key(self) -> (u16, std::cmp::Reverse<u16>, usize) {
+        (self.gap, std::cmp::Reverse(self.overlap), self.id)
+    }
+}
+
+fn focus_candidate(direction: FocusDirection, current: Rect, id: usize, other: Rect) -> Option<FocusCandidate> {
+    match direction {
+        FocusDirection::Left => {
+            let overlap = vertical_overlap(current, other)?;
+            let gap = gap_before(current.x, other.x, other.width)?;
+            Some(FocusCandidate { id, gap, overlap })
+        }
+        FocusDirection::Right => {
+            let overlap = vertical_overlap(current, other)?;
+            let gap = gap_before(other.x, current.x, current.width)?;
+            Some(FocusCandidate { id, gap, overlap })
+        }
+        FocusDirection::Up => {
+            let overlap = horizontal_overlap(current, other)?;
+            let gap = gap_before(current.y, other.y, other.height)?;
+            Some(FocusCandidate { id, gap, overlap })
+        }
+        FocusDirection::Down => {
+            let overlap = horizontal_overlap(current, other)?;
+            let gap = gap_before(other.y, current.y, current.height)?;
+            Some(FocusCandidate { id, gap, overlap })
+        }
+    }
+}
+
+fn vertical_overlap(a: Rect, b: Rect) -> Option<u16> {
+    overlap_1d(a.y, a.height, b.y, b.height)
+}
+
+fn horizontal_overlap(a: Rect, b: Rect) -> Option<u16> {
+    overlap_1d(a.x, a.width, b.x, b.width)
+}
+
+fn overlap_1d(a_start: u16, a_len: u16, b_start: u16, b_len: u16) -> Option<u16> {
+    let a_end = u32::from(a_start) + u32::from(a_len);
+    let b_end = u32::from(b_start) + u32::from(b_len);
+    let start = u32::from(a_start.max(b_start));
+    let end = a_end.min(b_end);
+    if end > start {
+        Some((end - start) as u16)
+    } else {
+        None
+    }
+}
+
+fn gap_before(target_start: u16, source_start: u16, source_len: u16) -> Option<u16> {
+    let source_end = u32::from(source_start) + u32::from(source_len);
+    let target_start = u32::from(target_start);
+    if target_start >= source_end {
+        Some((target_start - source_end) as u16)
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use super::{FocusDirection, Window, WindowAction};
+    use crate::layout::SplitDirection;
+
+    fn make_window() -> Window {
+        let (window, startup) = Window::new(false, 12, 24).unwrap();
+        assert!(matches!(startup.as_slice(), [WindowAction::SpawnPane { id: 0, .. }]));
+        window
+    }
+
+    fn split(window: &mut Window, direction: SplitDirection) {
+        let _ = window.split_active_pane(direction).unwrap();
+    }
+
+    #[test]
+    fn focus_left_and_right_moves_across_vertical_split() {
+        let mut window = make_window();
+        split(&mut window, SplitDirection::Vertical);
+
+        assert_eq!(window.active_pane_id, 1);
+        window.focus_pane(FocusDirection::Left).unwrap();
+        assert_eq!(window.active_pane_id, 0);
+        window.focus_pane(FocusDirection::Right).unwrap();
+        assert_eq!(window.active_pane_id, 1);
+    }
+
+    #[test]
+    fn focus_up_and_down_moves_across_horizontal_split() {
+        let mut window = make_window();
+        split(&mut window, SplitDirection::Horizontal);
+
+        assert_eq!(window.active_pane_id, 1);
+        window.focus_pane(FocusDirection::Up).unwrap();
+        assert_eq!(window.active_pane_id, 0);
+        window.focus_pane(FocusDirection::Down).unwrap();
+        assert_eq!(window.active_pane_id, 1);
+    }
+
+    #[test]
+    fn focus_is_noop_when_no_pane_exists_in_direction() {
+        let mut window = make_window();
+        split(&mut window, SplitDirection::Vertical);
+
+        assert_eq!(window.active_pane_id, 1);
+        window.focus_pane(FocusDirection::Right).unwrap();
+        assert_eq!(window.active_pane_id, 1);
+    }
+
+    #[test]
+    fn focus_chooses_nearest_candidate_in_requested_direction() {
+        let mut window = make_window();
+        split(&mut window, SplitDirection::Vertical);
+        window.focus_pane(FocusDirection::Left).unwrap();
+        split(&mut window, SplitDirection::Horizontal);
+
+        assert_eq!(window.active_pane_id, 2);
+        window.focus_pane(FocusDirection::Right).unwrap();
+        assert_eq!(window.active_pane_id, 1);
+    }
+
+    #[test]
+    fn focus_breaks_ties_by_overlap_then_pane_id() {
+        let mut window = make_window();
+        split(&mut window, SplitDirection::Vertical);
+        window.focus_pane(FocusDirection::Left).unwrap();
+        split(&mut window, SplitDirection::Horizontal);
+        window.focus_pane(FocusDirection::Up).unwrap();
+
+        assert_eq!(window.active_pane_id, 0);
+        window.focus_pane(FocusDirection::Right).unwrap();
+        assert_eq!(window.active_pane_id, 1);
+    }
+
+    #[test]
+    fn focus_after_pane_removal_uses_remaining_layout() {
+        let mut window = make_window();
+        split(&mut window, SplitDirection::Vertical);
+        window.focus_pane(FocusDirection::Left).unwrap();
+        split(&mut window, SplitDirection::Horizontal);
+
+        let _ = window.remove_pane(2).unwrap();
+        assert_eq!(window.active_pane_id, 0);
+        window.focus_pane(FocusDirection::Right).unwrap();
+        assert_eq!(window.active_pane_id, 1);
     }
 }

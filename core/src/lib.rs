@@ -1,4 +1,5 @@
 pub mod comm;
+pub mod config;
 pub mod constants;
 pub mod daemon_utils;
 pub mod error;

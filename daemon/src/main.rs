@@ -2,6 +2,7 @@ mod actors;
 mod cell;
 mod control_signals;
 mod daemon;
+mod input_parser;
 mod layout;
 mod lua;
 mod prelude;
