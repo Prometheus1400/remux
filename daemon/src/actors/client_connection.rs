@@ -174,7 +174,8 @@ impl ClientConnection {
                                             self.session_manager_handle.terminal_resize(rows, cols).await
                                         },
                                         CliEvent::Detach => {
-                                            self.session_manager_handle.client_disconnect(self.id).await
+                                            self.detach_and_exit().await?;
+                                            break;
                                         },
                                         CliEvent::KillPane => {
                                             self.session_manager_handle.user_kill_pane(self.id).await
@@ -203,9 +204,7 @@ impl ClientConnection {
                                 Err(e) => {
                                     // client disconnected
                                     debug!("Client disconnected because of error recieving cli event: {e}");
-                                    if let Err(disconnect_err) = self.session_manager_handle.client_disconnect(self.id).await {
-                                        warn!(error=%disconnect_err, client_id=%self.id, "Failed to notify session manager about disconnect");
-                                    }
+                                    self.cleanup_after_disconnect();
                                     break;
                                 }
                             }
@@ -231,5 +230,22 @@ impl ClientConnection {
                 .await?;
         }
         Ok(())
+    }
+
+    async fn detach_and_exit(&mut self) -> Result<()> {
+        self.state = ClientConnectionState::Unattached;
+        self.send_daemon_event(DaemonEvent::Disconnected).await?;
+        self.cleanup_after_disconnect();
+        Ok(())
+    }
+
+    fn cleanup_after_disconnect(&self) {
+        let session_manager_handle = self.session_manager_handle.clone();
+        let client_id = self.id;
+        tokio::spawn(async move {
+            if let Err(disconnect_err) = session_manager_handle.client_disconnect(client_id).await {
+                warn!(error=%disconnect_err, client_id=%client_id, "Failed to notify session manager about disconnect");
+            }
+        });
     }
 }

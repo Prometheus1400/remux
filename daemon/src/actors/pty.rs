@@ -226,14 +226,31 @@ fn set_fd_nonblocking(owned_fd: &OwnedFd) -> Result<()> {
 }
 
 fn run_child() -> ! {
-    let cmd = match CString::new("/bin/zsh") {
-        Ok(cmd) => cmd,
+    let argv = match shell_argv() {
+        Ok(argv) => argv,
         Err(e) => {
             eprintln!("failed to construct shell command for PTY: {e}");
             std::process::exit(1);
         }
     };
-    let _ = execvp(&cmd, std::slice::from_ref(&cmd));
+    let cmd = &argv[0];
+    let _ = execvp(cmd, &argv);
     eprintln!("failed to exec shell");
     std::process::exit(1);
+}
+
+fn shell_argv() -> std::result::Result<Vec<CString>, std::ffi::NulError> {
+    if let Some(shell) = std::env::var_os("REMUX_SHELL") {
+        return Ok(vec![CString::new(shell.to_string_lossy().as_bytes())?]);
+    }
+
+    #[cfg(test)]
+    {
+        return Ok(vec![CString::new("/bin/sh")?]);
+    }
+
+    #[cfg(not(test))]
+    {
+        Ok(vec![CString::new("/bin/zsh")?])
+    }
 }

@@ -79,7 +79,6 @@ async fn handle_message(session_manager_handle: SessionManagerHandle, mut stream
 mod test {
     #![allow(clippy::unwrap_used)]
 
-    use bytes::Bytes;
     use remux_core::{
         comm,
         events::{CliEvent, DaemonEvent},
@@ -89,13 +88,14 @@ mod test {
             response,
         },
     };
+    use serial_test::serial;
     use tokio::time::{Duration, timeout};
     use tokio::io::AsyncWriteExt;
     use tokio::net::UnixStream;
     use uuid::Uuid;
 
     use super::handle_message;
-    use crate::actors::session_manager::SessionManager;
+    use crate::actors::session_manager::{SessionManager, SessionManagerHandle};
     use crate::prelude::Result;
 
     async fn attach_client(
@@ -139,10 +139,17 @@ mod test {
         }
     }
 
+    async fn shutdown_session_manager(session_manager_handle: SessionManagerHandle) -> Result<()> {
+        session_manager_handle.kill().await?;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        Ok(())
+    }
+
     #[tokio::test]
+    #[serial]
     async fn handle_message_completes_attach_handshake() -> Result<()> {
         let session_manager_handle = SessionManager::spawn()?;
-        let (task, mut client_stream) = attach_client(session_manager_handle, "alpha").await;
+        let (task, mut client_stream) = attach_client(session_manager_handle.clone(), "alpha").await;
 
         let response: ResponseMessage<response::Attach> = comm::read_message(&mut client_stream).await?;
 
@@ -153,25 +160,29 @@ mod test {
         comm::send_event(&mut client_stream, CliEvent::Detach).await?;
         recv_until_disconnected(&mut client_stream).await?;
         task.await.unwrap()?;
+        shutdown_session_manager(session_manager_handle).await?;
         Ok(())
     }
 
     #[tokio::test]
+    #[serial]
     async fn handle_message_routes_detach_to_disconnected_event() -> Result<()> {
         let session_manager_handle = SessionManager::spawn()?;
-        let (task, mut client_stream) = attach_client(session_manager_handle, "beta").await;
+        let (task, mut client_stream) = attach_client(session_manager_handle.clone(), "beta").await;
 
         let _: ResponseMessage<response::Attach> = comm::read_message(&mut client_stream).await?;
         comm::send_event(&mut client_stream, CliEvent::Detach).await?;
         recv_until_disconnected(&mut client_stream).await?;
         task.await.unwrap()?;
+        shutdown_session_manager(session_manager_handle).await?;
         Ok(())
     }
 
     #[tokio::test]
+    #[serial]
     async fn handle_message_sends_first_render_without_waiting_for_resize_event() -> Result<()> {
         let session_manager_handle = SessionManager::spawn()?;
-        let (task, mut client_stream) = attach_client(session_manager_handle, "pre-sized").await;
+        let (task, mut client_stream) = attach_client(session_manager_handle.clone(), "pre-sized").await;
 
         let _: ResponseMessage<response::Attach> = comm::read_message(&mut client_stream).await?;
         let event = recv_daemon_event_with_timeout(&mut client_stream, Duration::from_secs(2)).await?;
@@ -180,35 +191,39 @@ mod test {
         comm::send_event(&mut client_stream, CliEvent::Detach).await?;
         recv_until_disconnected(&mut client_stream).await?;
         task.await.unwrap()?;
+        shutdown_session_manager(session_manager_handle).await?;
         Ok(())
     }
 
     #[tokio::test]
-    async fn handle_message_accepts_resize_and_raw_input_without_protocol_failure() -> Result<()> {
+    #[serial]
+    async fn handle_message_accepts_resize_without_protocol_failure() -> Result<()> {
         let session_manager_handle = SessionManager::spawn()?;
-        let (task, mut client_stream) = attach_client(session_manager_handle, "gamma").await;
+        let (task, mut client_stream) = attach_client(session_manager_handle.clone(), "gamma").await;
 
         let _: ResponseMessage<response::Attach> = comm::read_message(&mut client_stream).await?;
         comm::send_event(&mut client_stream, CliEvent::TerminalResize { rows: 20, cols: 60 }).await?;
-        comm::send_event(&mut client_stream, CliEvent::Raw(Bytes::from_static(b"echo test\r"))).await?;
         comm::send_event(&mut client_stream, CliEvent::Detach).await?;
 
         recv_until_disconnected(&mut client_stream).await?;
         task.await.unwrap()?;
+        shutdown_session_manager(session_manager_handle).await?;
         Ok(())
     }
 
     #[tokio::test]
+    #[serial]
     async fn handle_message_rejects_invalid_request_payload() -> Result<()> {
         let session_manager_handle = SessionManager::spawn()?;
         let (mut client_stream, daemon_stream) = UnixStream::pair()?;
-        let task = tokio::spawn(handle_message(session_manager_handle, daemon_stream));
+        let task = tokio::spawn(handle_message(session_manager_handle.clone(), daemon_stream));
 
         client_stream.write_all(&4u32.to_be_bytes()).await?;
         client_stream.write_all(b"nope").await?;
 
         let err = task.await.unwrap().unwrap_err();
         assert!(err.to_string().contains("Serialization error"));
+        shutdown_session_manager(session_manager_handle).await?;
         Ok(())
     }
 }

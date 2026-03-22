@@ -66,6 +66,7 @@ pub enum SessionManagerEvent {
         rows: u16,
         cols: u16,
     },
+    Kill,
 }
 use SessionManagerEvent::*;
 
@@ -177,15 +178,24 @@ impl SessionManagerState {
         }
     }
     pub fn detach_client(&mut self, client_id: Uuid) -> Option<ClientConnectionHandle> {
-        if self.clients.contains_key(&client_id) {
-            let session_id = self.client_to_session_mapping.remove(&client_id)?;
-            self.session_to_client_mapping
-                .get_mut(&session_id)?
-                .retain(|x| x != &client_id);
-            self.clients.remove(&client_id)
-        } else {
-            None
+        let session_id = self.client_to_session_mapping.remove(&client_id);
+        let client = self.clients.remove(&client_id);
+
+        if let Some(session_id) = session_id {
+            let mut remove_session_state = false;
+            if let Some(client_ids) = self.session_to_client_mapping.get_mut(&session_id) {
+                client_ids.retain(|x| x != &client_id);
+                if client_ids.is_empty() {
+                    remove_session_state = true;
+                }
+            }
+            if remove_session_state {
+                self.session_to_client_mapping.remove(&session_id);
+                self.session_switcher_state.remove(&session_id);
+            }
         }
+
+        client
     }
     // pub fn client_switch_session(&mut self, client_id: Uuid, session_name: &str) -> Result<()> {
     //     let id_opt = self.get_by_name(session_name).map(|info| info.id);
@@ -283,6 +293,10 @@ impl SessionManager {
                                 self.handle_session_send_output(session_id, bytes).await
                             }
                             TerminalResize { rows, cols } => self.handle_terminal_resize(rows, cols).await,
+                            Kill => {
+                                self.handle_shutdown().await?;
+                                break;
+                            }
                         };
 
                         if let Err(e) = result {
@@ -513,6 +527,21 @@ impl SessionManager {
             OverlayInputResult::Ignore => {}
         }
 
+        Ok(())
+    }
+
+    async fn handle_shutdown(&mut self) -> Result<()> {
+        for SessionInfo { handle, id, .. } in self.state.sessions.values() {
+            if let Err(e) = handle.kill().await.wrap_err_with(|| format!("failed to kill session {id}")) {
+                warn!(error=%e, session_id=*id, "Session shutdown failed");
+            }
+        }
+        self.state.sessions.clear();
+        self.state.session_name_to_id.clear();
+        self.state.session_to_client_mapping.clear();
+        self.state.client_to_session_mapping.clear();
+        self.state.clients.clear();
+        self.state.session_switcher_state.clear();
         Ok(())
     }
 }
