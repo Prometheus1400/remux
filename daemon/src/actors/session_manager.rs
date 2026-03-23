@@ -15,8 +15,15 @@ use crate::{
         window::FocusDirection,
     },
     layout::SplitDirection,
-    lua::config::ConfigRuntime,
+    lua::config::{
+        ConfigRuntime, LoadedFuzzySelectorWidget, LoadedWidget, LuaRuntimeState, RuntimeCommand, RuntimePaneState,
+        RuntimeSessionState, RuntimeWidgetState, RuntimeWindowState,
+    },
     prelude::*,
+    render::{
+        overlay::{FuzzySelectorOverlay, SelectorItem, SelectorOverlay},
+        widget::OverlayWidget,
+    },
 };
 
 #[allow(unused)]
@@ -41,6 +48,10 @@ pub enum SessionManagerEvent {
     ClientOpenSessionSwitcher {
         client_id: Uuid,
     },
+    InvokeNamedAction {
+        client_id: Uuid,
+        name: String,
+    },
 
     // client -> session events
     UserInput {
@@ -57,6 +68,22 @@ pub enum SessionManagerEvent {
     },
     UserKillPane {
         client_id: Uuid,
+    },
+    UserNewWindow {
+        client_id: Uuid,
+    },
+    UserNextWindow {
+        client_id: Uuid,
+    },
+    UserPrevWindow {
+        client_id: Uuid,
+    },
+    UserKillWindow {
+        client_id: Uuid,
+    },
+    UserSelectWindow {
+        client_id: Uuid,
+        index: usize,
     },
 
     // session -> client events
@@ -86,16 +113,155 @@ struct SessionManagerState {
     session_to_client_mapping: HashMap<u32, Vec<Uuid>>, // support multiple clients attached to same session
     clients: HashMap<Uuid, ClientConnectionHandle>,
     client_to_session_mapping: HashMap<Uuid, u32>, // one client can only attach to one session
-    session_switcher_state: HashMap<u32, SessionSwitcherState>,
+    active_widget: HashMap<u32, ActiveWidgetState>,
     session_id_count: u32,
     manager_handle: SessionManagerHandle,
     config_runtime: Arc<ConfigRuntime>,
 }
 
 #[derive(Debug, Clone)]
-struct SessionSwitcherState {
-    sessions: Vec<String>,
+struct ActiveSelectorState {
+    widget_id: String,
+    overlay: SelectorOverlay,
+}
+
+impl ActiveSelectorState {
+    fn selected_item(&self) -> Option<&SelectorItem> {
+        self.overlay.items.get(self.overlay.selected)
+    }
+}
+
+#[derive(Debug, Clone)]
+struct ActiveFuzzySelectorState {
+    widget_id: String,
+    title: String,
+    footer: String,
+    placeholder: String,
+    style: crate::render::overlay::FuzzySelectorStyle,
+    all_items: Vec<SelectorItem>,
+    filtered_indices: Vec<usize>,
+    query: String,
     selected: usize,
+}
+
+impl ActiveFuzzySelectorState {
+    fn from_loaded(widget_id: String, loaded: LoadedFuzzySelectorWidget) -> Self {
+        let filtered_indices = (0..loaded.items.len()).collect();
+        Self {
+            widget_id,
+            title: loaded.title,
+            footer: loaded.footer,
+            placeholder: loaded.placeholder,
+            style: loaded.style,
+            all_items: loaded.items,
+            filtered_indices,
+            query: String::new(),
+            selected: loaded.selected,
+        }
+    }
+
+    fn overlay(&self) -> OverlayWidget {
+        OverlayWidget::FuzzySelector(FuzzySelectorOverlay {
+            title: self.title.clone(),
+            footer: self.footer.clone(),
+            placeholder: self.placeholder.clone(),
+            query: self.query.clone(),
+            items: self
+                .filtered_indices
+                .iter()
+                .filter_map(|&index| self.all_items.get(index).cloned())
+                .collect(),
+            selected: self.selected.min(self.filtered_indices.len().saturating_sub(1)),
+            style: self.style.clone(),
+        })
+    }
+
+    fn selected_item(&self) -> Option<&SelectorItem> {
+        let index = *self.filtered_indices.get(self.selected)?;
+        self.all_items.get(index)
+    }
+
+    fn recompute_matches(&mut self) {
+        self.filtered_indices = fuzzy_match_indices(&self.query, &self.all_items);
+        self.selected = self.selected.min(self.filtered_indices.len().saturating_sub(1));
+    }
+
+    fn append_query(&mut self, ch: char) {
+        self.query.push(ch);
+        self.selected = 0;
+        self.recompute_matches();
+    }
+
+    fn delete_query_char(&mut self) {
+        self.query.pop();
+        self.selected = 0;
+        self.recompute_matches();
+    }
+}
+
+#[derive(Debug, Clone)]
+enum ActiveWidgetState {
+    Selector(ActiveSelectorState),
+    FuzzySelector(ActiveFuzzySelectorState),
+}
+
+impl ActiveWidgetState {
+    fn overlay(&self) -> OverlayWidget {
+        match self {
+            Self::Selector(state) => OverlayWidget::Selector(state.overlay.clone()),
+            Self::FuzzySelector(state) => state.overlay(),
+        }
+    }
+
+    fn widget_id(&self) -> &str {
+        match self {
+            Self::Selector(state) => &state.widget_id,
+            Self::FuzzySelector(state) => &state.widget_id,
+        }
+    }
+
+    fn kind(&self) -> &'static str {
+        match self {
+            Self::Selector(_) => "selector",
+            Self::FuzzySelector(_) => "fuzzy-selector",
+        }
+    }
+
+    fn selected_item_id(&self) -> Option<String> {
+        match self {
+            Self::Selector(state) => state.selected_item().map(|item| item.id.clone()),
+            Self::FuzzySelector(state) => state.selected_item().map(|item| item.id.clone()),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct SessionContext {
+    current_session: Option<RuntimeSessionState>,
+    current_window: Option<RuntimeWindowState>,
+    current_pane: Option<RuntimePaneState>,
+    sessions: Vec<RuntimeSessionState>,
+    active_widget: Option<RuntimeWidgetState>,
+}
+
+impl SessionContext {
+    fn into_lua_state(self) -> LuaRuntimeState {
+        LuaRuntimeState {
+            sessions: self.sessions,
+            current_session: self.current_session,
+            current_window: self.current_window,
+            current_pane: self.current_pane,
+            active_widget: self.active_widget,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+enum OverlayInputResult {
+    Updated,
+    Confirm,
+    Cancel,
+    Ignore,
 }
 
 impl SessionManagerState {
@@ -106,7 +272,7 @@ impl SessionManagerState {
             session_to_client_mapping: Default::default(),
             clients: Default::default(),
             client_to_session_mapping: Default::default(),
-            session_switcher_state: Default::default(),
+            active_widget: Default::default(),
             session_id_count: Default::default(),
             manager_handle: manager_handle.clone(),
             config_runtime,
@@ -201,7 +367,7 @@ impl SessionManagerState {
             }
             if remove_session_state {
                 self.session_to_client_mapping.remove(&session_id);
-                self.session_switcher_state.remove(&session_id);
+                self.active_widget.remove(&session_id);
             }
         }
 
@@ -289,6 +455,9 @@ impl SessionManager {
                             ClientOpenSessionSwitcher { client_id } => {
                                 self.handle_client_open_session_switcher(client_id).await
                             }
+                            InvokeNamedAction { client_id, name } => {
+                                self.handle_invoke_named_action(client_id, &name).await
+                            }
                             UserInput { client_id, bytes } => {
                                 self.handle_client_send_user_input(client_id, bytes).await
                             }
@@ -299,6 +468,13 @@ impl SessionManager {
                                 self.handle_client_focus_pane(client_id, direction).await
                             }
                             UserKillPane { client_id } => self.handle_client_kill_pane(client_id).await,
+                            UserNewWindow { client_id } => self.handle_client_new_window(client_id).await,
+                            UserNextWindow { client_id } => self.handle_client_next_window(client_id).await,
+                            UserPrevWindow { client_id } => self.handle_client_prev_window(client_id).await,
+                            UserKillWindow { client_id } => self.handle_client_kill_window(client_id).await,
+                            UserSelectWindow { client_id, index } => {
+                                self.handle_client_select_window(client_id, index).await
+                            }
                             SessionSendOutput { session_id, bytes } => {
                                 self.handle_session_send_output(session_id, bytes).await
                             }
@@ -383,45 +559,13 @@ impl SessionManager {
     }
 
     async fn handle_client_open_session_switcher(&mut self, client_id: Uuid) -> Result<()> {
-        let session_id = self
-            .state
-            .client_to_session_mapping
-            .get(&client_id)
-            .copied()
-            .ok_or_eyre("client has no attached session")?;
-        let sessions = self
-            .state
-            .sessions
-            .values()
-            .map(|session| session.name.clone())
-            .sorted()
-            .collect_vec();
-        let current_name = self
-            .state
-            .sessions
-            .get(&session_id)
-            .map(|session| session.name.clone())
-            .unwrap_or_default();
-        let selected = sessions.iter().position(|name| name == &current_name).unwrap_or(0);
-        self.state.session_switcher_state.insert(
-            session_id,
-            SessionSwitcherState {
-                sessions: sessions.clone(),
-                selected,
-            },
-        );
-        self.state
-            .get_session_for_client(&client_id)?
-            .handle
-            .show_session_switcher(sessions, selected)
-            .await?;
-        Ok(())
+        self.handle_client_open_widget(client_id, "session_switcher").await
     }
 
     async fn handle_client_send_user_input(&mut self, client_id: Uuid, bytes: Bytes) -> Result<()> {
         if let Some(session_id) = self.state.client_to_session_mapping.get(&client_id).copied() {
-            if self.state.session_switcher_state.contains_key(&session_id) {
-                return self.handle_session_switcher_input(client_id, session_id, bytes).await;
+            if self.state.active_widget.contains_key(&session_id) {
+                return self.handle_active_widget_input(client_id, session_id, bytes).await;
             }
         }
 
@@ -456,6 +600,46 @@ impl SessionManager {
             .await
     }
 
+    async fn handle_client_new_window(&mut self, client_id: Uuid) -> Result<()> {
+        self.state
+            .get_session_for_client(&client_id)?
+            .handle
+            .user_new_window()
+            .await
+    }
+
+    async fn handle_client_next_window(&mut self, client_id: Uuid) -> Result<()> {
+        self.state
+            .get_session_for_client(&client_id)?
+            .handle
+            .user_next_window()
+            .await
+    }
+
+    async fn handle_client_prev_window(&mut self, client_id: Uuid) -> Result<()> {
+        self.state
+            .get_session_for_client(&client_id)?
+            .handle
+            .user_prev_window()
+            .await
+    }
+
+    async fn handle_client_kill_window(&mut self, client_id: Uuid) -> Result<()> {
+        self.state
+            .get_session_for_client(&client_id)?
+            .handle
+            .user_kill_window()
+            .await
+    }
+
+    async fn handle_client_select_window(&mut self, client_id: Uuid, index: usize) -> Result<()> {
+        self.state
+            .get_session_for_client(&client_id)?
+            .handle
+            .user_select_window(index)
+            .await
+    }
+
     async fn handle_session_send_output(&mut self, session_id: u32, bytes: Bytes) -> Result<()> {
         let clients = self.state.get_clients_for_session(&session_id);
         if clients.is_empty() {
@@ -484,66 +668,230 @@ impl SessionManager {
         Ok(())
     }
 
-    async fn handle_session_switcher_input(&mut self, client_id: Uuid, session_id: u32, bytes: Bytes) -> Result<()> {
-        enum OverlayInputResult {
-            UpdateSelection(usize),
-            Confirm(String),
-            Cancel,
-            Ignore,
-        }
+    async fn handle_invoke_named_action(&mut self, client_id: Uuid, name: &str) -> Result<()> {
+        let context = self.build_session_context(client_id).await?;
+        let commands = self
+            .state
+            .config_runtime
+            .invoke_named_action(name, &context.clone().into_lua_state())?;
+        self.execute_runtime_commands(client_id, commands).await
+    }
 
-        let Some(state) = self.state.session_switcher_state.get_mut(&session_id) else {
+    async fn handle_client_open_widget(&mut self, client_id: Uuid, widget_id: &str) -> Result<()> {
+        let session_id = self
+            .state
+            .client_to_session_mapping
+            .get(&client_id)
+            .copied()
+            .ok_or_eyre("client has no attached session")?;
+        let context = self.build_session_context(client_id).await?;
+        let widget = self
+            .state
+            .config_runtime
+            .load_widget(widget_id, &context.into_lua_state())?;
+
+        let active_widget = match widget {
+            LoadedWidget::Selector(overlay) => ActiveWidgetState::Selector(ActiveSelectorState {
+                widget_id: widget_id.to_owned(),
+                overlay,
+            }),
+            LoadedWidget::FuzzySelector(loaded) => {
+                ActiveWidgetState::FuzzySelector(ActiveFuzzySelectorState::from_loaded(widget_id.to_owned(), loaded))
+            }
+        };
+        let overlay = active_widget.overlay();
+        self.state.active_widget.insert(session_id, active_widget);
+        self.state
+            .get_session_for_client(&client_id)?
+            .handle
+            .show_widget(overlay)
+            .await?;
+        Ok(())
+    }
+
+    async fn handle_active_widget_input(&mut self, client_id: Uuid, session_id: u32, bytes: Bytes) -> Result<()> {
+        let Some(state) = self.state.active_widget.get_mut(&session_id) else {
             return Ok(());
         };
 
-        let action = match bytes.as_ref() {
-            b"\x1b[A" => {
-                state.selected = state.selected.saturating_sub(1);
-                OverlayInputResult::UpdateSelection(state.selected)
-            }
-            b"\x1b[B" => {
-                if state.selected + 1 < state.sessions.len() {
-                    state.selected += 1;
+        let action = match state {
+            ActiveWidgetState::Selector(state) => match bytes.as_ref() {
+                b"\x1b[A" | b"k" | b"\x10" => {
+                    state.overlay.selected = state.overlay.selected.saturating_sub(1);
+                    OverlayInputResult::Updated
                 }
-                OverlayInputResult::UpdateSelection(state.selected)
-            }
-            b"\r" | b"\n" => {
-                let target = state.sessions.get(state.selected).cloned().unwrap_or_default();
-                OverlayInputResult::Confirm(target)
-            }
-            b"\x1b" => OverlayInputResult::Cancel,
-            _ => OverlayInputResult::Ignore,
+                b"\x1b[B" | b"j" | b"\x0e" => {
+                    if state.overlay.selected + 1 < state.overlay.items.len() {
+                        state.overlay.selected += 1;
+                    }
+                    OverlayInputResult::Updated
+                }
+                b"\r" | b"\n" => OverlayInputResult::Confirm,
+                b"\x1b" => OverlayInputResult::Cancel,
+                _ => OverlayInputResult::Ignore,
+            },
+            ActiveWidgetState::FuzzySelector(state) => match bytes.as_ref() {
+                b"\x1b[A" | b"\x10" => {
+                    state.selected = state.selected.saturating_sub(1);
+                    OverlayInputResult::Updated
+                }
+                b"\x1b[B" | b"\x0e" => {
+                    if state.selected + 1 < state.filtered_indices.len() {
+                        state.selected += 1;
+                    }
+                    OverlayInputResult::Updated
+                }
+                b"\r" | b"\n" => OverlayInputResult::Confirm,
+                b"\x1b" => OverlayInputResult::Cancel,
+                b"\x08" | b"\x7f" => {
+                    state.delete_query_char();
+                    OverlayInputResult::Updated
+                }
+                [byte] if (0x20..=0x7e).contains(byte) => {
+                    state.append_query(char::from(*byte));
+                    OverlayInputResult::Updated
+                }
+                _ => OverlayInputResult::Ignore,
+            },
         };
 
         match action {
-            OverlayInputResult::UpdateSelection(selected) => {
+            OverlayInputResult::Updated => {
+                let overlay = self
+                    .state
+                    .active_widget
+                    .get(&session_id)
+                    .ok_or_else(|| eyre!("active widget disappeared"))?
+                    .overlay();
                 self.state
                     .get_session_for_client(&client_id)?
                     .handle
-                    .update_session_switcher_selection(selected)
+                    .update_widget(overlay)
                     .await?;
             }
-            OverlayInputResult::Confirm(target) => {
-                self.state.session_switcher_state.remove(&session_id);
+            OverlayInputResult::Confirm => {
+                let (widget_id, selected_id) = {
+                    let state = self
+                        .state
+                        .active_widget
+                        .get(&session_id)
+                        .ok_or_else(|| eyre!("active widget missing"))?;
+                    (state.widget_id().to_owned(), state.selected_item_id())
+                };
+
+                let Some(selected_id) = selected_id else {
+                    return Ok(());
+                };
+
+                self.state.active_widget.remove(&session_id);
                 self.state
                     .get_session_for_client(&client_id)?
                     .handle
-                    .hide_session_switcher()
+                    .hide_widget()
                     .await?;
-                self.handle_client_switch_session(client_id, &target).await?;
+                let context = self.build_session_context(client_id).await?;
+                let commands = self.state.config_runtime.invoke_widget_confirm(
+                    &widget_id,
+                    &selected_id,
+                    &context.into_lua_state(),
+                )?;
+                self.execute_runtime_commands(client_id, commands).await?;
             }
             OverlayInputResult::Cancel => {
-                self.state.session_switcher_state.remove(&session_id);
+                self.state.active_widget.remove(&session_id);
                 self.state
                     .get_session_for_client(&client_id)?
                     .handle
-                    .hide_session_switcher()
+                    .hide_widget()
                     .await?;
             }
             OverlayInputResult::Ignore => {}
         }
 
         Ok(())
+    }
+
+    async fn build_session_context(&self, client_id: Uuid) -> Result<SessionContext> {
+        let current_session_id = self.state.client_to_session_mapping.get(&client_id).copied();
+        let mut sessions = Vec::new();
+        for session in self.state.sessions.values() {
+            let mut snapshot = session.handle.snapshot().await?;
+            snapshot.is_current = Some(snapshot.id) == current_session_id;
+            sessions.push(snapshot);
+        }
+        sessions.sort_by(|a, b| a.name.cmp(&b.name));
+        let current_session = sessions.iter().find(|session| session.is_current).cloned();
+        let current_window = current_session
+            .as_ref()
+            .and_then(|session| session.current_window.clone());
+        let current_pane = current_window.as_ref().and_then(|window| window.active_pane.clone());
+        let active_widget = current_session_id.and_then(|session_id| {
+            self.state
+                .active_widget
+                .get(&session_id)
+                .map(|widget| RuntimeWidgetState {
+                    id: widget.widget_id().to_owned(),
+                    kind: widget.kind().to_owned(),
+                })
+        });
+        Ok(SessionContext {
+            current_session,
+            current_window,
+            current_pane,
+            sessions,
+            active_widget,
+        })
+    }
+
+    async fn execute_runtime_commands(&mut self, client_id: Uuid, commands: Vec<RuntimeCommand>) -> Result<()> {
+        for command in commands {
+            match command {
+                RuntimeCommand::Builtin(action) => self.execute_builtin_action(client_id, action).await?,
+                RuntimeCommand::OpenWidget(widget_id) => self.handle_client_open_widget(client_id, &widget_id).await?,
+                RuntimeCommand::SwitchSession(session_name) => {
+                    self.handle_client_switch_session(client_id, &session_name).await?
+                }
+            }
+        }
+        Ok(())
+    }
+
+    async fn execute_builtin_action(
+        &mut self,
+        client_id: Uuid,
+        action: remux_core::config::BuiltinAction,
+    ) -> Result<()> {
+        use remux_core::config::BuiltinAction;
+
+        match action {
+            BuiltinAction::SplitPaneVertical => {
+                self.handle_client_split_pane(client_id, SplitDirection::Vertical).await
+            }
+            BuiltinAction::SplitPaneHorizontal => {
+                self.handle_client_split_pane(client_id, SplitDirection::Horizontal)
+                    .await
+            }
+            BuiltinAction::FocusPaneLeft => self.handle_client_focus_pane(client_id, FocusDirection::Left).await,
+            BuiltinAction::FocusPaneDown => self.handle_client_focus_pane(client_id, FocusDirection::Down).await,
+            BuiltinAction::FocusPaneUp => self.handle_client_focus_pane(client_id, FocusDirection::Up).await,
+            BuiltinAction::FocusPaneRight => self.handle_client_focus_pane(client_id, FocusDirection::Right).await,
+            BuiltinAction::KillPane => self.handle_client_kill_pane(client_id).await,
+            BuiltinAction::NewWindow => self.handle_client_new_window(client_id).await,
+            BuiltinAction::NextWindow => self.handle_client_next_window(client_id).await,
+            BuiltinAction::PrevWindow => self.handle_client_prev_window(client_id).await,
+            BuiltinAction::KillWindow => self.handle_client_kill_window(client_id).await,
+            BuiltinAction::SelectWindow1 => self.handle_client_select_window(client_id, 1).await,
+            BuiltinAction::SelectWindow2 => self.handle_client_select_window(client_id, 2).await,
+            BuiltinAction::SelectWindow3 => self.handle_client_select_window(client_id, 3).await,
+            BuiltinAction::SelectWindow4 => self.handle_client_select_window(client_id, 4).await,
+            BuiltinAction::SelectWindow5 => self.handle_client_select_window(client_id, 5).await,
+            BuiltinAction::SelectWindow6 => self.handle_client_select_window(client_id, 6).await,
+            BuiltinAction::SelectWindow7 => self.handle_client_select_window(client_id, 7).await,
+            BuiltinAction::SelectWindow8 => self.handle_client_select_window(client_id, 8).await,
+            BuiltinAction::SelectWindow9 => self.handle_client_select_window(client_id, 9).await,
+            BuiltinAction::Detach => self.handle_client_disconnect(client_id).await,
+            BuiltinAction::OpenSessionSwitcher => self.handle_client_open_widget(client_id, "session_switcher").await,
+        }
     }
 
     async fn handle_shutdown(&mut self) -> Result<()> {
@@ -561,9 +909,47 @@ impl SessionManager {
         self.state.session_to_client_mapping.clear();
         self.state.client_to_session_mapping.clear();
         self.state.clients.clear();
-        self.state.session_switcher_state.clear();
+        self.state.active_widget.clear();
         Ok(())
     }
+}
+
+fn fuzzy_match_indices(query: &str, items: &[SelectorItem]) -> Vec<usize> {
+    if query.is_empty() {
+        return (0..items.len()).collect();
+    }
+
+    let query_chars = query.to_ascii_lowercase().chars().collect::<Vec<_>>();
+    let mut matches = items
+        .iter()
+        .enumerate()
+        .filter_map(|(index, item)| fuzzy_score(&query_chars, &item.label).map(|score| (index, score)))
+        .collect_vec();
+
+    matches.sort_by_key(|(index, score)| (*score, *index));
+    matches.into_iter().map(|(index, _)| index).collect()
+}
+
+fn fuzzy_score(query: &[char], label: &str) -> Option<(u8, usize, usize, usize)> {
+    let label_chars = label.to_ascii_lowercase().chars().collect::<Vec<_>>();
+    let mut positions = Vec::with_capacity(query.len());
+    let mut cursor = 0usize;
+
+    for needle in query {
+        let found = label_chars[cursor..]
+            .iter()
+            .position(|candidate| candidate == needle)
+            .map(|offset| cursor + offset)?;
+        positions.push(found);
+        cursor = found + 1;
+    }
+
+    let first = *positions.first()?;
+    let last = *positions.last()?;
+    let contiguous = positions.windows(2).all(|pair| pair[1] == pair[0] + 1);
+    let span = last.saturating_sub(first);
+
+    Some((u8::from(!contiguous), span, first, label_chars.len()))
 }
 
 #[cfg(test)]

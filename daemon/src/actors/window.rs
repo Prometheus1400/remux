@@ -5,6 +5,7 @@ use bytes::Bytes;
 use crate::{
     cell::RemuxCell,
     layout::{LayoutNode, Rect, SplitDirection},
+    lua::config::PaneStyle,
     prelude::*,
     render::surface::Surface,
 };
@@ -19,19 +20,11 @@ pub enum FocusDirection {
 
 #[derive(Debug, Clone)]
 pub enum WindowAction {
-    SendOutput(Bytes),
     SendInputToPane { id: usize, bytes: Bytes },
     ResizePane { id: usize, rect: Rect },
     KillPane { id: usize },
     RerenderPane { id: usize },
     SpawnPane { id: usize, rect: Rect },
-}
-
-#[allow(unused)]
-#[derive(Debug)]
-pub enum WindowState {
-    Focused,
-    Unfocused,
 }
 
 #[derive(Debug)]
@@ -40,17 +33,12 @@ pub struct Window {
     layout_sizing_map: BTreeMap<usize, Rect>,
     pane_cursors: BTreeMap<usize, (u16, u16)>,
     active_pane_id: usize,
-    next_pane_id: usize,
     root_rect: Rect,
-    status_line_enabled: bool,
-
-    #[allow(unused)]
-    window_state: WindowState,
+    content_rect: Rect,
 }
 
 impl Window {
-    pub fn new(status_line_enabled: bool, rows: u16, cols: u16) -> Result<(Self, Vec<WindowAction>)> {
-        let init_pane_id = 0;
+    pub fn new(rows: u16, cols: u16, content_rect: Rect, init_pane_id: usize) -> Result<(Self, Vec<WindowAction>)> {
         let layout = LayoutNode::Pane { id: init_pane_id };
 
         let root_rect = Rect {
@@ -61,7 +49,7 @@ impl Window {
         };
 
         let mut layout_sizing_map = BTreeMap::new();
-        layout.calculate_layout(content_rect(root_rect, status_line_enabled), &mut layout_sizing_map)?;
+        layout.calculate_layout(content_rect, &mut layout_sizing_map)?;
         let init_rect = *layout_sizing_map
             .get(&init_pane_id)
             .ok_or_else(|| Error::msg("initial pane rect missing"))?;
@@ -72,10 +60,8 @@ impl Window {
                 layout_sizing_map,
                 pane_cursors: BTreeMap::new(),
                 active_pane_id: init_pane_id,
-                next_pane_id: init_pane_id + 1,
                 root_rect,
-                status_line_enabled,
-                window_state: WindowState::Focused,
+                content_rect,
             },
             vec![WindowAction::SpawnPane {
                 id: init_pane_id,
@@ -131,8 +117,7 @@ impl Window {
         Ok(Vec::new())
     }
 
-    pub fn split_active_pane(&mut self, direction: SplitDirection) -> Result<Vec<WindowAction>> {
-        let new_pane_id = self.next_pane_id;
+    pub fn split_active_pane(&mut self, new_pane_id: usize, direction: SplitDirection) -> Result<Vec<WindowAction>> {
         self.layout.add_split(self.active_pane_id, new_pane_id, direction);
         self.recalculate_layout()?;
 
@@ -142,7 +127,6 @@ impl Window {
             .ok_or_else(|| Error::msg("new pane rect missing after split"))?;
 
         self.active_pane_id = new_pane_id;
-        self.next_pane_id += 1;
 
         let mut actions = vec![WindowAction::SpawnPane { id: new_pane_id, rect }];
         actions.extend(self.resize_actions());
@@ -161,13 +145,14 @@ impl Window {
         }])
     }
 
-    pub fn resize_terminal(&mut self, rows: u16, cols: u16) -> Result<Vec<WindowAction>> {
+    pub fn resize_terminal(&mut self, rows: u16, cols: u16, content_rect: Rect) -> Result<Vec<WindowAction>> {
         self.root_rect = Rect {
             x: 0,
             y: 0,
             width: cols,
             height: rows,
         };
+        self.content_rect = content_rect;
         self.recalculate_layout()?;
 
         let mut actions = self.resize_actions();
@@ -204,10 +189,8 @@ impl Window {
 
     fn recalculate_layout(&mut self) -> Result<()> {
         self.layout_sizing_map.clear();
-        self.layout.calculate_layout(
-            content_rect(self.root_rect, self.status_line_enabled),
-            &mut self.layout_sizing_map,
-        )
+        self.layout
+            .calculate_layout(self.content_rect, &mut self.layout_sizing_map)
     }
 
     fn resize_actions(&self) -> Vec<WindowAction> {
@@ -217,11 +200,19 @@ impl Window {
             .collect()
     }
 
-    pub fn compose_surface(
-        &self,
-        pane_surfaces: &BTreeMap<usize, Surface>,
-        status_line: Option<&Surface>,
-    ) -> Result<Surface> {
+    pub fn pane_ids(&self) -> Vec<usize> {
+        self.layout_sizing_map.keys().copied().collect()
+    }
+
+    pub fn active_pane_id(&self) -> usize {
+        self.active_pane_id
+    }
+
+    pub fn pane_rect(&self, id: usize) -> Option<Rect> {
+        self.layout_sizing_map.get(&id).copied()
+    }
+
+    pub fn compose_surface(&self, pane_surfaces: &BTreeMap<usize, Surface>, pane_style: &PaneStyle) -> Result<Surface> {
         let mut surface = Surface::new(self.root_rect.width, self.root_rect.height);
 
         for (id, rect) in &self.layout_sizing_map {
@@ -230,7 +221,7 @@ impl Window {
             }
         }
 
-        self.paint_pane_borders(&mut surface);
+        self.paint_pane_borders(&mut surface, pane_style);
 
         if let Some(rect) = self.layout_sizing_map.get(&self.active_pane_id) {
             if let Some((cursor_x, cursor_y)) = self.pane_cursors.get(&self.active_pane_id) {
@@ -238,14 +229,10 @@ impl Window {
             }
         }
 
-        if let Some(status_line) = status_line {
-            surface.overlay_at(status_line, 0, self.root_rect.height.saturating_sub(1));
-        }
-
         Ok(surface)
     }
 
-    fn paint_pane_borders(&self, surface: &mut Surface) {
+    fn paint_pane_borders(&self, surface: &mut Surface, pane_style: &PaneStyle) {
         let cols = self.root_rect.width;
         let rows = self.root_rect.height;
         let active_rect = self.layout_sizing_map.get(&self.active_pane_id);
@@ -305,26 +292,13 @@ impl Window {
                 let str_slice = border_char.encode_utf8(&mut border_char_buf);
                 cell.set_content(str_slice.as_bytes());
                 cell.set_fg_color(if is_active_border {
-                    vt100::Color::Idx(14)
+                    vt100::Color::Idx(pane_style.active_border_fg)
                 } else {
-                    vt100::Color::Idx(8)
+                    vt100::Color::Idx(pane_style.inactive_border_fg)
                 });
                 surface.paint_cell(x, y, cell);
             }
         }
-    }
-}
-
-fn content_rect(root_rect: Rect, status_line_enabled: bool) -> Rect {
-    if status_line_enabled && root_rect.height > 0 {
-        Rect {
-            x: root_rect.x,
-            y: root_rect.y,
-            width: root_rect.width,
-            height: root_rect.height.saturating_sub(1),
-        }
-    } else {
-        root_rect
     }
 }
 
@@ -379,11 +353,7 @@ fn overlap_1d(a_start: u16, a_len: u16, b_start: u16, b_len: u16) -> Option<u16>
     let b_end = u32::from(b_start) + u32::from(b_len);
     let start = u32::from(a_start.max(b_start));
     let end = a_end.min(b_end);
-    if end > start {
-        Some((end - start) as u16)
-    } else {
-        None
-    }
+    if end > start { Some((end - start) as u16) } else { None }
 }
 
 fn gap_before(target_start: u16, source_start: u16, source_len: u16) -> Option<u16> {
@@ -404,13 +374,25 @@ mod tests {
     use crate::layout::SplitDirection;
 
     fn make_window() -> Window {
-        let (window, startup) = Window::new(false, 12, 24).unwrap();
+        let (window, startup) = Window::new(
+            12,
+            24,
+            crate::layout::Rect {
+                x: 0,
+                y: 0,
+                width: 24,
+                height: 12,
+            },
+            0,
+        )
+        .unwrap();
         assert!(matches!(startup.as_slice(), [WindowAction::SpawnPane { id: 0, .. }]));
         window
     }
 
     fn split(window: &mut Window, direction: SplitDirection) {
-        let _ = window.split_active_pane(direction).unwrap();
+        let new_pane_id = window.pane_ids().into_iter().max().unwrap_or(0) + 1;
+        let _ = window.split_active_pane(new_pane_id, direction).unwrap();
     }
 
     #[test]

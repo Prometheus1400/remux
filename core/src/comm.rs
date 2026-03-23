@@ -8,8 +8,7 @@ use crate::{
     error::ResponseError,
     events::{CliEvent, DaemonEvent},
     messages::{
-        CliRequestMessage, Message, RequestBody, ResponseMessage, ResponseResult,
-        request::DaemonRequestMessage,
+        CliRequestMessage, Message, RequestBody, ResponseMessage, ResponseResult, request::DaemonRequestMessage,
     },
     prelude::*,
 };

@@ -13,10 +13,9 @@ use tokio::{net::UnixStream, sync::mpsc};
 use uuid::Uuid;
 
 use crate::{
-    actors::session_manager::SessionManagerHandle,
+    actors::{session_manager::SessionManagerHandle, window::FocusDirection},
     input_parser::{InputParser, ParsedInput},
     layout::SplitDirection,
-    actors::window::FocusDirection,
     lua::config::ConfigRuntime,
     prelude::*,
 };
@@ -53,7 +52,6 @@ pub struct ClientConnection {
     handle: ClientConnectionHandle,
     rx: mpsc::Receiver<ClientConnectionEvent>,
     session_manager_handle: SessionManagerHandle,
-    config_runtime: Arc<ConfigRuntime>,
     input_parser: InputParser,
     state: ClientConnectionState,
 }
@@ -89,7 +87,6 @@ impl ClientConnection {
             rx,
             session_manager_handle,
             input_parser: InputParser::new(config_runtime.key_bindings()),
-            config_runtime,
             state: ClientConnectionState::Unattached,
         }
     }
@@ -277,10 +274,9 @@ impl ClientConnection {
     }
 
     async fn invoke_named_action(&self, name: &str) -> Result<()> {
-        for action in self.config_runtime.invoke_named_action(name)? {
-            self.execute_builtin_action(action).await?;
-        }
-        Ok(())
+        self.session_manager_handle
+            .invoke_named_action(self.id, name.to_owned())
+            .await
     }
 
     async fn execute_builtin_action(&self, action: BuiltinAction) -> Result<()> {
@@ -295,11 +291,40 @@ impl ClientConnection {
                     .user_split_pane(self.id, SplitDirection::Horizontal)
                     .await
             }
-            BuiltinAction::FocusPaneLeft => self.session_manager_handle.user_focus_pane(self.id, FocusDirection::Left).await,
-            BuiltinAction::FocusPaneDown => self.session_manager_handle.user_focus_pane(self.id, FocusDirection::Down).await,
-            BuiltinAction::FocusPaneUp => self.session_manager_handle.user_focus_pane(self.id, FocusDirection::Up).await,
-            BuiltinAction::FocusPaneRight => self.session_manager_handle.user_focus_pane(self.id, FocusDirection::Right).await,
+            BuiltinAction::FocusPaneLeft => {
+                self.session_manager_handle
+                    .user_focus_pane(self.id, FocusDirection::Left)
+                    .await
+            }
+            BuiltinAction::FocusPaneDown => {
+                self.session_manager_handle
+                    .user_focus_pane(self.id, FocusDirection::Down)
+                    .await
+            }
+            BuiltinAction::FocusPaneUp => {
+                self.session_manager_handle
+                    .user_focus_pane(self.id, FocusDirection::Up)
+                    .await
+            }
+            BuiltinAction::FocusPaneRight => {
+                self.session_manager_handle
+                    .user_focus_pane(self.id, FocusDirection::Right)
+                    .await
+            }
             BuiltinAction::KillPane => self.session_manager_handle.user_kill_pane(self.id).await,
+            BuiltinAction::NewWindow => self.session_manager_handle.user_new_window(self.id).await,
+            BuiltinAction::NextWindow => self.session_manager_handle.user_next_window(self.id).await,
+            BuiltinAction::PrevWindow => self.session_manager_handle.user_prev_window(self.id).await,
+            BuiltinAction::KillWindow => self.session_manager_handle.user_kill_window(self.id).await,
+            BuiltinAction::SelectWindow1 => self.session_manager_handle.user_select_window(self.id, 1).await,
+            BuiltinAction::SelectWindow2 => self.session_manager_handle.user_select_window(self.id, 2).await,
+            BuiltinAction::SelectWindow3 => self.session_manager_handle.user_select_window(self.id, 3).await,
+            BuiltinAction::SelectWindow4 => self.session_manager_handle.user_select_window(self.id, 4).await,
+            BuiltinAction::SelectWindow5 => self.session_manager_handle.user_select_window(self.id, 5).await,
+            BuiltinAction::SelectWindow6 => self.session_manager_handle.user_select_window(self.id, 6).await,
+            BuiltinAction::SelectWindow7 => self.session_manager_handle.user_select_window(self.id, 7).await,
+            BuiltinAction::SelectWindow8 => self.session_manager_handle.user_select_window(self.id, 8).await,
+            BuiltinAction::SelectWindow9 => self.session_manager_handle.user_select_window(self.id, 9).await,
             BuiltinAction::Detach => self.session_manager_handle.client_disconnect(self.id).await,
             BuiltinAction::OpenSessionSwitcher => {
                 self.session_manager_handle.client_open_session_switcher(self.id).await
